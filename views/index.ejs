@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kick.com Chat Integration</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎮 Kick.com Chat Integration</h1>
+            <div class="auth-status">
+                <% if (isAuthenticated) { %>
+                    <span class="status-badge authenticated">✅ Authenticated</span>
+                    <button id="logoutBtn" class="btn btn-secondary">Logout</button>
+                <% } else { %>
+                    <span class="status-badge not-authenticated">❌ Not Authenticated</span>
+                    <a href="/auth/kick" class="btn btn-primary">OAuth Login with Kick.com</a>
+                <% } %>
+            </div>
+        </header>
+
+        <main>
+            <div class="controls-section">
+                <h2>Chat Controls</h2>
+                
+                <div class="control-group">
+                    <label for="channelInput">Channel Name:</label>
+                    <input type="text" id="channelInput" placeholder="Enter channel name..." 
+                           value="<%= currentChannel %>" <%= !isAuthenticated ? 'disabled' : '' %>>
+                </div>
+                
+                <div class="button-group">
+                    <button id="startBtn" class="btn btn-success" <%= !isAuthenticated ? 'disabled' : '' %>>
+                        Start Monitoring
+                    </button>
+                    <button id="stopBtn" class="btn btn-danger" <%= !isAuthenticated ? 'disabled' : '' %>>
+                        Stop Monitoring
+                    </button>
+                    <button id="statusBtn" class="btn btn-info">Check Status</button>
+                </div>
+                
+                <div id="statusDisplay" class="status-display">
+                    <% if (chatMonitoring) { %>
+                        <span class="status-indicator monitoring">🟢 Monitoring: <%= currentChannel %></span>
+                    <% } else { %>
+                        <span class="status-indicator stopped">🔴 Not Monitoring</span>
+                    <% } %>
+                </div>
+            </div>
+
+            <div class="chat-section">
+                <h2>Live Chat Messages</h2>
+                <div class="chat-stats">
+                    <span id="messageCount">Messages: 0</span>
+                    <span id="connectionCount">Connected: 0</span>
+                </div>
+                <div id="chatContainer" class="chat-container">
+                    <div class="no-messages">No chat messages yet...</div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <div class="webhook-info">
+                <h3>Webhook Setup Instructions:</h3>
+                <ol>
+                    <li>Install ngrok: <code>npm install -g ngrok</code></li>
+                    <li>Run ngrok: <code>ngrok http 3000</code></li>
+                    <li>Copy the https URL and configure your Kick.com webhook to: <code>[your-ngrok-url]/webhook/chat</code></li>
+                    <li>Set up your .env file with Kick.com OAuth credentials</li>
+                </ol>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/js/main.js"></script>
+</body>
+</html>
