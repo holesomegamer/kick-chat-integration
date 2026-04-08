@@ -20,7 +20,6 @@ let isAuthenticated = false;
 let isPollingActive = false;
 let debugMode = false;
 let pollingInterval = null;
-let startMonitoringTimestamp = null; // Timestamp when monitoring started
 
 // TTS variables
 let ttsQueue = [];
@@ -186,10 +185,10 @@ function updateMessageStats() {
 
 // Display chat messages
 function displayChatMessages(messages) {
-    debugLog('📋 displayChatMessages called with:', messages?.length, 'messages');
+    debugLog('📋 displayChatMessages called with:', messages);
     
     if (messages && messages.length > 0) {
-        debugLog('📋 First message ID:', messages[0].id, 'played:', messages[0].played);
+        debugLog('📋 First message structure:', JSON.stringify(messages[0], null, 2));
     }
     
     const chatContainer = document.getElementById('liveChatMessages');
@@ -197,52 +196,30 @@ function displayChatMessages(messages) {
         console.error('❌ liveChatMessages container not found!');
         return;
     }
-
+    
+    // Preserve played status for existing messages
+    messages.forEach(msg => {
+        if (displayedMessages.has(msg.id)) {
+            const existingMsg = displayedMessages.get(msg.id);
+            msg.played = existingMsg.played;
+            debugLog(`📋 Preserving played status for message ${msg.id}: ${msg.played}`);
+        } else {
+            displayedMessages.set(msg.id, msg);
+        }
+    });
+    
+    chatContainer.innerHTML = '';
+    
     if (!messages || messages.length === 0) {
         debugLog('📋 No messages to display');
         chatContainer.innerHTML = '<div class="no-messages">💬 No chat messages found...</div>';
         return;
     }
-
-    // Clean up old messages from memory (keep only last 50)
-    if (displayedMessages.size > 50) {
-        const oldIds = Array.from(displayedMessages.keys()).slice(0, displayedMessages.size - 50);
-        oldIds.forEach(id => displayedMessages.delete(id));
-        debugLog('🧹 Cleaned up old message tracking, now have:', displayedMessages.size, 'tracked messages');
-    }
-
-    // Process messages and identify truly NEW ones (never seen before)
-    let newMessages = [];
-    let existingMessages = 0;
     
-    messages.forEach(msg => {
-        if (displayedMessages.has(msg.id)) {
-            // This message was seen before - preserve its played status
-            const existingMsg = displayedMessages.get(msg.id);
-            msg.played = existingMsg.played; 
-            existingMessages++;
-            debugLog(`📋 EXISTING message ${msg.id}: played=${msg.played}`);
-        } else {
-            // This is a truly NEW message - mark for auto-play
-            msg.played = false;
-            newMessages.push(msg);
-            debugLog(`📋 NEW message ${msg.id}: will auto-play`);
-        }
-        // Always update the map with current message object
-        displayedMessages.set(msg.id, msg);
-    });
-    
-    debugLog(`📋 Message summary: ${newMessages.length} NEW for auto-play, ${existingMessages} existing (${displayedMessages.size} total tracked)`);
-    
-    // Reverse messages to show oldest first (natural chat flow)
-    const orderedMessages = [...messages].reverse();
-    debugLog(`📋 Reversed ${messages.length} messages for chronological display`);
-    
-    // Clear container and rebuild display
-    chatContainer.innerHTML = '';
+    debugLog(`📋 Displaying ${messages.length} messages`);
     displayedMessageCount = messages.length;
     
-    orderedMessages.forEach((msg, index) => {
+    messages.forEach((msg, index) => {
         debugLog(`📋 Processing message ${index + 1}:`, msg);
         debugLog(`📋 Message fields: user=${msg.user}, message=${msg.message}, timestamp=${msg.timestamp}`);
         
@@ -302,18 +279,13 @@ function displayChatMessages(messages) {
         chatContainer.appendChild(messageDiv);
         debugLog(`📋 Message ${index + 1} added to container`);
         
-        // Add TTS for ONLY truly NEW messages (never seen before)
+        // Add TTS for new messages
         if (safeMessage && safeMessage !== '[No message]') {
-            const isNewMessage = newMessages.some(newMsg => newMsg.id === msg.id);
-            if (isNewMessage && !msg.played) {
-                setTimeout(() => {
-                    debugLog(`🔊 AUTO-PLAYING NEW message: ${safeUser}: ${safeMessage.substring(0, 30)}...`);
+            setTimeout(() => {
+                if (!msg.played) {
                     speakText(safeMessage, safeUser, false, (success) => {
                         if (success) {
                             msg.played = true;
-                            // Update the message in the displayedMessages Map
-                            displayedMessages.set(msg.id, msg);
-                            
                             const indicator = messageDiv.querySelector('.play-indicator');
                             if (indicator) {
                                 indicator.textContent = '🔇';
@@ -322,10 +294,10 @@ function displayChatMessages(messages) {
                             debugLog(`🔊 Message marked as played: ${safeUser}`);
                         }
                     });
-                }, index * 200); // Stagger auto-play timing
-            } else {
-                debugLog(`🔊 SKIPPING auto-play for message ${msg.id}: isNew=${isNewMessage}, played=${msg.played}`);
-            }
+                } else {
+                    debugLog(`🔊 Skipping already played message: ${safeUser}: ${safeMessage.substring(0, 30)}...`);
+                }
+            }, index * 200);
         }
     });
     
@@ -350,22 +322,14 @@ async function getLiveChatMessages() {
     try {
         debugLog('📡 Making fetch request to /api/get-live-chat-messages');
         
-        const requestBody = {
-            channel_name: currentChannel
-        };
-        
-        // Include timestamp filter if monitoring is active
-        if (startMonitoringTimestamp) {
-            requestBody.since_timestamp = startMonitoringTimestamp;
-            debugLog('📅 Requesting messages since:', startMonitoringTimestamp);
-        }
-        
         const response = await fetch('/api/get-live-chat-messages', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify(requestBody)
+            body: JSON.stringify({
+                channel_name: currentChannel
+            })
         });
 
         if (!response.ok) {
@@ -397,16 +361,6 @@ function startChatPolling() {
     debugLog('📡 Starting chat polling...');
     isPollingActive = true;
     
-    // Set timestamp for filtering new messages only
-    startMonitoringTimestamp = new Date().toISOString();
-    debugLog('📅 Start monitoring timestamp:', startMonitoringTimestamp);
-    
-    // Clear previous messages to start fresh
-    const chatContainer = document.getElementById('liveChatMessages');
-    if (chatContainer) {
-        chatContainer.innerHTML = '<div class="no-messages">📡 Monitoring started - waiting for new messages...</div>';
-    }
-    
     // Initial fetch
     getLiveChatMessages();
     
@@ -414,7 +368,7 @@ function startChatPolling() {
     pollingInterval = setInterval(() => {
         debugLog('📡 Polling for new messages...');
         getLiveChatMessages();
-    }, 2000); // 2 second intervals for faster real-time updates
+    }, 5000); // 5 second intervals
     
     updateUI();
 }
@@ -428,10 +382,6 @@ function stopChatPolling() {
         clearInterval(pollingInterval);
         pollingInterval = null;
     }
-    
-    // Reset monitoring timestamp
-    startMonitoringTimestamp = null;
-    debugLog('📅 Monitoring timestamp reset');
     
     updateUI();
 }
@@ -528,13 +478,6 @@ function setupEventListeners() {
         channelInput.addEventListener('input', function() {
             currentChannel = this.value.trim();
             updateUI();
-        });
-    }
-    
-    // OAuth login button  
-    if (loginBtn) {
-        loginBtn.addEventListener('click', function() {
-            window.location.href = '/auth/kick';
         });
     }
     

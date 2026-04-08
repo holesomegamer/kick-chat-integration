@@ -1,14 +1,14 @@
 {
   "name": "kick-chat-integration",
   "version": "1.0.0",
-  "description": "A web app that integrates with Kick.com chat API using webhooks and ngrok",
+  "description": "A web app that integrates with Kick.com chat API using real-time polling",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
     "ngrok": "ngrok http 3000"
   },
-  "keywords": ["kick", "chat", "webhook", "ngrok", "oauth"],
+  "keywords": ["kick", "chat", "polling", "oauth"],
   "author": "",
   "license": "MIT",
   "dependencies": {

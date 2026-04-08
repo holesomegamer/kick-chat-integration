@@ -15,9 +15,10 @@
                 <% if (isAuthenticated) { %>
                     <span class="status-badge authenticated">✅ Authenticated</span>
                     <button id="logoutBtn" class="btn btn-secondary">Logout</button>
+                    <button id="debugToggleBtn" class="btn btn-secondary">🔧 Show Debug Tools</button>
                 <% } else { %>
                     <span class="status-badge not-authenticated">❌ Not Authenticated</span>
-                    <a href="/auth/kick" class="btn btn-primary">OAuth Login with Kick.com</a>
+                    <button id="loginBtn" class="btn btn-primary">OAuth Login with Kick.com</button>
                 <% } %>
             </div>
         </header>
@@ -36,42 +37,63 @@
                     <button id="startBtn" class="btn btn-success" <%= !isAuthenticated ? 'disabled' : '' %>>
                         Start Monitoring
                     </button>
-                    <button id="stopBtn" class="btn btn-danger" <%= !isAuthenticated ? 'disabled' : '' %>>
+                    <button id="stopBtn" class="btn btn-danger" <%= !isAuthenticated ? 'disabled' : '' %> style="display: none;">
                         Stop Monitoring
                     </button>
-                    <button id="statusBtn" class="btn btn-info">Check Status</button>
+                    <button id="statusBtn" class="btn btn-info" <%= !isAuthenticated ? 'disabled' : '' %>>Check Status</button>
                 </div>
-                
-                <div id="statusDisplay" class="status-display">
-                    <% if (chatMonitoring) { %>
-                        <span class="status-indicator monitoring">🟢 Monitoring: <%= currentChannel %></span>
-                    <% } else { %>
-                        <span class="status-indicator stopped">🔴 Not Monitoring</span>
-                    <% } %>
+            
+            <div class="debug-buttons" style="display: none;">
+                <h3>🐛 Debug & Development Tools</h3>
+                <div class="button-group">
+                    <button id="debugTokenBtn" class="btn btn-info" <%= !isAuthenticated ? 'disabled' : '' %>>
+                        🔍 Check Token Status
+                    </button>
+                    <button id="getLiveChat" class="btn btn-success" <%= !isAuthenticated ? 'disabled' : '' %>>
+                        💬 Manual Chat Fetch
+                    </button>
                 </div>
             </div>
 
+            <div class="tts-controls">
+                <h3>🔊 Text-to-Speech Controls</h3>
+                <div class="control-group">
+                    <label>
+                        <input type="checkbox" id="ttsEnabled" checked> Enable Text-to-Speech
+                    </label>
+                    <label>
+                        TTS Speed: <input type="range" id="ttsSpeed" min="0.5" max="2" step="0.1" value="1">
+                        <span id="speedValue">1.0</span>
+                    </label>
+                </div>
+            </div>
+            
+            <div id="statusDisplay" class="status-display">
+                <% if (chatMonitoring) { %>
+                    <span class="status-indicator monitoring">🟢 Monitoring: <%= currentChannel %></span>
+                <% } else { %>
+                    <span class="status-indicator stopped">🔴 Not Monitoring</span>
+                <% } %>
+            </div>
+
             <div class="chat-section">
-                <h2>Live Chat Messages</h2>
+                <h2>💬 Live Chat Messages</h2>
                 <div class="chat-stats">
                     <span id="messageCount">Messages: 0</span>
-                    <span id="connectionCount">Connected: 0</span>
+                    <span id="ttsCount">TTS Spoken: 0</span>
+                    <span id="replayCount">Manual Replays: 0</span>
+                    <span id="lastUpdate">Last Update: Never</span>
                 </div>
-                <div id="chatContainer" class="chat-container">
-                    <div class="no-messages">No chat messages yet...</div>
+                <div id="liveChatMessages" class="chat-container">
+                    <div class="no-messages">💬 Live chat messages will appear here...</div>
                 </div>
             </div>
         </main>
 
         <footer>
-            <div class="webhook-info">
-                <h3>Webhook Setup Instructions:</h3>
-                <ol>
-                    <li>Install ngrok: <code>npm install -g ngrok</code></li>
-                    <li>Run ngrok: <code>ngrok http 3000</code></li>
-                    <li>Copy the https URL and configure your Kick.com webhook to: <code>[your-ngrok-url]/webhook/chat</code></li>
-                    <li>Set up your .env file with Kick.com OAuth credentials</li>
-                </ol>
+            <div class="app-info">
+                <h3>Real-time Chat Integration via API Polling</h3>
+                <p>This app uses direct API polling to fetch chat messages in real-time. No webhooks required!</p>
             </div>
         </footer>
     </div>
