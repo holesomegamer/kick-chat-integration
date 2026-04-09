@@ -2,7 +2,7 @@
 # Project: Kick.com Chat to Web Integration
 
 ## Project Overview
-A Node.js web application that integrates with Kick.com's chat API using webhooks through ngrok.
+A Node.js web application that integrates with Kick.com's chat API using direct API polling.
 
 ## Features
 - OAuth authentication with Kick.com
@@ -10,13 +10,13 @@ A Node.js web application that integrates with Kick.com's chat API using webhook
 - Start/Stop chat monitoring controls
 - Status checking functionality  
 - Channel name input field
-- Webhook endpoint for receiving chat messages
+- Local and provider-based text-to-speech support
 
 ## Tech Stack
 - Backend: Node.js + Express
 - Frontend: HTML/CSS/JavaScript with WebSockets
 - Authentication: OAuth 2.0 flow
-- Webhooks: ngrok tunnel integration
+- Chat transport: Kick API polling
 - Real-time: Socket.io for live chat updates
 
 ## Development Status
@@ -24,7 +24,7 @@ A Node.js web application that integrates with Kick.com's chat API using webhook
 ✅ Node.js backend with Express server
 ✅ Frontend with authentication and controls
 ✅ OAuth integration with Kick.com
-✅ Webhook implementation for chat messages
+✅ API polling implementation for chat messages
 ✅ Real-time WebSocket communication
 ✅ Complete documentation and setup instructions
 
@@ -33,4 +33,4 @@ A Node.js web application that integrates with Kick.com's chat API using webhook
 2. Run `npm install` to install dependencies
 3. Copy `.env.example` to `.env` and configure OAuth credentials
 4. Start the server with `npm start`
-5. Set up ngrok tunnel for webhooks
+5. Start monitoring a channel and verify live chat messages

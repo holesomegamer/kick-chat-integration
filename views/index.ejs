@@ -12,6 +12,7 @@
         <header>
             <h1>🎮 Kick.com Chat Integration</h1>
             <div class="auth-status">
+                <a href="/voices" class="btn btn-secondary">Manage Voices</a>
                 <% if (isAuthenticated) { %>
                     <span class="status-badge authenticated">✅ Authenticated</span>
                     <button id="logoutBtn" class="btn btn-secondary">Logout</button>
@@ -42,6 +43,14 @@
                     </button>
                     <button id="statusBtn" class="btn btn-info" <%= !isAuthenticated ? 'disabled' : '' %>>Check Status</button>
                 </div>
+
+                <div id="statusDisplay" class="status-display">
+                    <% if (chatMonitoring) { %>
+                        <span class="status-indicator monitoring">🟢 Monitoring: <%= currentChannel %></span>
+                    <% } else { %>
+                        <span class="status-indicator stopped">🔴 Not Monitoring</span>
+                    <% } %>
+                </div>
             
             <div class="debug-buttons" style="display: none;">
                 <h3>🐛 Debug & Development Tools</h3>
@@ -67,14 +76,6 @@
                     </label>
                 </div>
             </div>
-            
-            <div id="statusDisplay" class="status-display">
-                <% if (chatMonitoring) { %>
-                    <span class="status-indicator monitoring">🟢 Monitoring: <%= currentChannel %></span>
-                <% } else { %>
-                    <span class="status-indicator stopped">🔴 Not Monitoring</span>
-                <% } %>
-            </div>
 
             <div class="chat-section">
                 <h2>💬 Live Chat Messages</h2>
@@ -93,7 +94,7 @@
         <footer>
             <div class="app-info">
                 <h3>Real-time Chat Integration via API Polling</h3>
-                <p>This app uses direct API polling to fetch chat messages in real-time. No webhooks required!</p>
+                <p>This app uses direct API polling to fetch chat messages in real-time.</p>
             </div>
         </footer>
     </div>

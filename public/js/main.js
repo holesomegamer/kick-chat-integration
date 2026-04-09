@@ -31,6 +31,37 @@ let speechSynthesis = window.speechSynthesis;
 let displayedMessageCount = 0;
 let displayedMessages = new Map(); // Track displayed messages by ID
 
+const TTS_COMMANDS = new Set(['tts', 'custom1', 'custom2']);
+const TTS_VOICE_PROFILES = {
+    default: { pitch: 1.0, rateMultiplier: 1.0 },
+    custom1: { pitch: 0.7, rateMultiplier: 0.95 },
+    custom2: { pitch: 1.35, rateMultiplier: 1.08 }
+};
+
+function hashVoiceTag(tag) {
+    const text = String(tag || 'default');
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+        hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+    }
+    return hash;
+}
+
+function getVoiceProfile(voice) {
+    if (TTS_VOICE_PROFILES[voice]) {
+        return TTS_VOICE_PROFILES[voice];
+    }
+
+    const hash = hashVoiceTag(voice);
+    const pitch = 0.85 + (hash % 40) / 100;
+    const rateMultiplier = 0.9 + ((hash >> 4) % 25) / 100;
+
+    return {
+        pitch: Math.max(0.6, Math.min(1.5, pitch)),
+        rateMultiplier: Math.max(0.8, Math.min(1.2, rateMultiplier))
+    };
+}
+
 // Utility functions
 function debugLog(...args) {
     if (debugMode) {
@@ -62,6 +93,39 @@ function formatTimestamp(timestamp) {
     }
 }
 
+function getTTSDirective(msg) {
+    if (msg && msg.ttsEligible === true && typeof msg.ttsText === 'string') {
+        const parsedText = msg.ttsText.trim();
+        const requestedVoice = typeof msg.ttsVoice === 'string' && msg.ttsVoice.trim().length > 0
+            ? msg.ttsVoice.trim().toLowerCase()
+            : 'default';
+        return {
+            eligible: parsedText.length > 0,
+            text: parsedText,
+            voice: requestedVoice
+        };
+    }
+
+    const rawText = typeof msg?.message === 'string' ? msg.message.trim() : '';
+    const match = rawText.match(/^!(\w+)\s+([\s\S]+)$/i);
+    const command = match?.[1]?.toLowerCase();
+    const parsedText = match?.[2]?.trim() || '';
+    if (command && (TTS_COMMANDS.has(command) || command.length > 0) && parsedText.length > 0) {
+        const requestedVoice = command === 'tts' ? 'default' : command;
+        return {
+            eligible: true,
+            text: parsedText,
+            voice: requestedVoice
+        };
+    }
+
+    return {
+        eligible: false,
+        text: '',
+        voice: 'default'
+    };
+}
+
 // Toggle debug mode
 function toggleDebugMode() {
     debugMode = !debugMode;
@@ -91,8 +155,60 @@ function checkAuthenticationStatus() {
     return isAuthenticated;
 }
 
+function isProviderCustomVoice(voice) {
+    return voice !== 'default' && voice !== 'custom1' && voice !== 'custom2';
+}
+
+async function playProviderVoiceAudio(text, voice) {
+    const response = await fetch('/api/tts/custom', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            voiceTag: voice,
+            text
+        })
+    });
+
+    if (!response.ok) {
+        let serverMessage = 'Failed to synthesize custom voice audio.';
+        try {
+            const payload = await response.json();
+            if (payload?.error) {
+                serverMessage = payload.error;
+            }
+        } catch (_error) {
+            // Ignore JSON parse errors and keep fallback message.
+        }
+        throw new Error(serverMessage);
+    }
+
+    const audioBlob = await response.blob();
+    const audioUrl = URL.createObjectURL(audioBlob);
+
+    return new Promise((resolve, reject) => {
+        const audio = new Audio(audioUrl);
+
+        audio.onended = () => {
+            URL.revokeObjectURL(audioUrl);
+            resolve();
+        };
+
+        audio.onerror = () => {
+            URL.revokeObjectURL(audioUrl);
+            reject(new Error(`Audio playback failed for !${voice}.`));
+        };
+
+        audio.play().catch((error) => {
+            URL.revokeObjectURL(audioUrl);
+            reject(error);
+        });
+    });
+}
+
 // TTS Functions
-function speakText(text, username, forceReplay = false, onComplete = null) {
+function speakText(text, username, voice = 'default', forceReplay = false, onComplete = null) {
     const ttsEnabled = document.getElementById('ttsEnabled')?.checked;
     const ttsSpeed = parseFloat(document.getElementById('ttsSpeed')?.value || 1);
     
@@ -118,10 +234,41 @@ function speakText(text, username, forceReplay = false, onComplete = null) {
     if (forceReplay) {
         debugLog(`🔊 Manual TTS replay: ${username}: ${cleanText.substring(0, 50)}...`);
     }
+
+    if (isProviderCustomVoice(voice)) {
+        const customVoiceTask = async () => {
+            isSpeaking = true;
+            try {
+                debugLog(`🎙️ Requesting provider voice !${voice} for: ${cleanText.substring(0, 50)}...`);
+                await playProviderVoiceAudio(cleanText, voice);
+                isSpeaking = false;
+                ttsCount++;
+                updateMessageStats();
+                if (onComplete) onComplete(true);
+            } catch (error) {
+                console.error('Custom voice playback error:', error.message || error);
+                isSpeaking = false;
+                if (onComplete) onComplete(false);
+            } finally {
+                processNextInTTSQueue();
+            }
+        };
+
+        if (isSpeaking) {
+            ttsQueue.push(customVoiceTask);
+            debugLog(`🎙️ Added provider voice task to queue: ${voice} (queue length: ${ttsQueue.length})`);
+        } else {
+            customVoiceTask();
+        }
+        return;
+    }
+
+    const voiceProfile = getVoiceProfile(voice);
+    const adjustedRate = Math.max(0.5, Math.min(2, ttsSpeed * voiceProfile.rateMultiplier));
     
-    const utterance = new SpeechSynthesisUtterance(`${username} says: ${cleanText}`);
-    utterance.rate = ttsSpeed;
-    utterance.pitch = 1;
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = adjustedRate;
+    utterance.pitch = voiceProfile.pitch;
     utterance.volume = 0.8;
     
     utterance.onstart = function() {
@@ -155,8 +302,14 @@ function speakText(text, username, forceReplay = false, onComplete = null) {
 
 function processNextInTTSQueue() {
     if (ttsQueue.length > 0 && !isSpeaking) {
-        const nextUtterance = ttsQueue.shift();
-        speechSynthesis.speak(nextUtterance);
+        const nextEntry = ttsQueue.shift();
+
+        if (typeof nextEntry === 'function') {
+            nextEntry();
+            return;
+        }
+
+        speechSynthesis.speak(nextEntry);
     }
 }
 
@@ -169,6 +322,19 @@ function setupTTSControls() {
             speedValueSpan.textContent = `${this.value}x`;
         });
     }
+}
+
+function renderMonitoringStatus() {
+    if (!statusDisplay) {
+        return;
+    }
+
+    if (isPollingActive && currentChannel) {
+        statusDisplay.innerHTML = `<span class="status-indicator monitoring">🟢 Monitoring: ${escapeHtml(currentChannel)}</span>`;
+        return;
+    }
+
+    statusDisplay.innerHTML = '<span class="status-indicator stopped">🔴 Not Monitoring</span>';
 }
 
 // Update message statistics
@@ -261,18 +427,27 @@ function displayChatMessages(messages) {
         
         const safeUser = msg.user || 'Unknown';
         const safeMessage = msg.message || '[No message]';
-        const playedIndicator = msg.played ? '🔇' : '🔊';
+        const ttsDirective = getTTSDirective(msg);
+        const playedIndicator = !ttsDirective.eligible ? '⏭' : (msg.played ? '🔇' : '🔊');
+        const indicatorTitle = !ttsDirective.eligible
+            ? 'Ignored for auto TTS (requires !tts command)'
+            : (msg.played ? 'Already played (click to replay)' : 'Not yet played');
         
         messageDiv.innerHTML = `
             <span class="chat-user" ${userStyle}>${escapeHtml(safeUser)}</span>
             ${badges}
             <span class="chat-text">${escapeHtml(safeMessage)}</span>
-            <span class="play-indicator" title="${msg.played ? 'Already played (click to replay)' : 'Not yet played'}">${playedIndicator}</span>
+            <span class="play-indicator" title="${indicatorTitle}">${playedIndicator}</span>
             <span class="chat-timestamp">${formattedTime}</span>
         `;
         
         // Add click handler for manual replay
         messageDiv.addEventListener('click', () => {
+            if (!ttsDirective.eligible) {
+                debugLog(`🔊 Manual replay skipped (no !tts command): ${safeUser}: ${safeMessage}`);
+                return;
+            }
+
             debugLog(`🔊 Manual replay requested for: ${safeUser}: ${safeMessage}`);
             replayCount++;
             
@@ -282,7 +457,7 @@ function displayChatMessages(messages) {
                 indicator.title = 'Playing...';
             }
             
-            speakText(safeMessage, safeUser, true, (success) => {
+            speakText(ttsDirective.text, safeUser, ttsDirective.voice, true, (success) => {
                 if (indicator) {
                     if (success) {
                         indicator.textContent = '🔇';
@@ -305,10 +480,10 @@ function displayChatMessages(messages) {
         // Add TTS for ONLY truly NEW messages (never seen before)
         if (safeMessage && safeMessage !== '[No message]') {
             const isNewMessage = newMessages.some(newMsg => newMsg.id === msg.id);
-            if (isNewMessage && !msg.played) {
+            if (isNewMessage && !msg.played && ttsDirective.eligible) {
                 setTimeout(() => {
-                    debugLog(`🔊 AUTO-PLAYING NEW message: ${safeUser}: ${safeMessage.substring(0, 30)}...`);
-                    speakText(safeMessage, safeUser, false, (success) => {
+                    debugLog(`🔊 AUTO-PLAYING NEW message: ${safeUser}: ${ttsDirective.text.substring(0, 30)}...`);
+                    speakText(ttsDirective.text, safeUser, ttsDirective.voice, false, (success) => {
                         if (success) {
                             msg.played = true;
                             // Update the message in the displayedMessages Map
@@ -324,7 +499,7 @@ function displayChatMessages(messages) {
                     });
                 }, index * 200); // Stagger auto-play timing
             } else {
-                debugLog(`🔊 SKIPPING auto-play for message ${msg.id}: isNew=${isNewMessage}, played=${msg.played}`);
+                debugLog(`🔊 SKIPPING auto-play for message ${msg.id}: isNew=${isNewMessage}, played=${msg.played}, eligible=${ttsDirective.eligible}`);
             }
         }
     });
@@ -440,6 +615,11 @@ function stopChatPolling() {
 function updateUI() {
     const startPollingBtn = document.getElementById('startBtn');
     const stopPollingBtn = document.getElementById('stopBtn');
+
+    // Keep currentChannel in sync before computing button state.
+    if (channelInput && channelInput.value.trim()) {
+        currentChannel = channelInput.value.trim();
+    }
     
     if (startPollingBtn) {
         startPollingBtn.style.display = isPollingActive ? 'none' : 'inline-block';
@@ -449,11 +629,8 @@ function updateUI() {
     if (stopPollingBtn) {
         stopPollingBtn.style.display = isPollingActive ? 'inline-block' : 'none';
     }
-    
-    // Update channel from input
-    if (channelInput && channelInput.value.trim()) {
-        currentChannel = channelInput.value.trim();
-    }
+
+    renderMonitoringStatus();
 }
 
 // Status check

@@ -68,3 +68,10 @@ ngrok.exe
 # Temporary files
 tmp/
 temp/
+
+# Local TTS Python artifacts
+local-tts-service/venv311/
+local-tts-service/__pycache__/
+local-tts-service/.pytest_cache/
+local-tts-service/*.pyc
+local-tts-service/**/*.pyc

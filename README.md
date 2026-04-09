@@ -1,6 +1,6 @@
 # Kick.com Chat Integration Web App
 
-A Node.js web application that integrates with Kick.com's chat API using webhooks through ngrok to display real-time chat messages on a local website.
+A Node.js web application that integrates with Kick.com's chat API to display real-time chat messages on a local website, with optional local voice synthesis.
 
 ## 🚀 Features
 
@@ -9,21 +9,25 @@ A Node.js web application that integrates with Kick.com's chat API using webhook
 - **Start/Stop Monitoring** controls for chat channels
 - **Channel Management** with input field for channel names
 - **Status Checking** functionality
-- **Webhook Integration** via ngrok for receiving chat messages
+- **Voice Library UI** for adding, editing, deleting, and tracking voice entries
+- **Custom Voice Commands** (for example `!me`) mapped from ready voices
+- **Local TTS Provider Support** (CPU, no cloud calls required)
 - **Responsive Web Interface** with modern UI
 
 ## 📋 Prerequisites
 
-- Node.js (v14 or higher)
+- Node.js (v18 or higher recommended)
 - npm or yarn
-- ngrok account (for webhook tunneling)
 - Kick.com Developer Account
+- Python 3.11 (only if using local voice cloning mode)
 
 ## 🛠️ Installation
 
+Use this section for manual setup. For the easiest handoff flow, use the scripts in **Simple Setup** below.
+
 1. **Clone or download this project**
    ```bash
-   cd chat2tts
+   cd kick-chat-integration
    ```
 
 2. **Install dependencies**
@@ -31,16 +35,35 @@ A Node.js web application that integrates with Kick.com's chat API using webhook
    npm install
    ```
 
-3. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` file with your Kick.com OAuth credentials.
+## ⚡ Simple Setup (Recommended For Sharing)
 
-4. **Install ngrok globally (if not already installed)**
+Use these scripts for the fastest onboarding:
+
+1. **Core setup (Node + .env bootstrap)**
    ```bash
-   npm install -g ngrok
+   npm run setup:core
    ```
+
+2. **Optional: local CPU voice cloning setup (Python 3.11 + venv + deps)**
+   ```bash
+   npm run setup:local-tts
+   ```
+
+3. **Start both services (main app + local TTS)**
+   ```bash
+   npm run start:all
+   ```
+
+4. **Run diagnostics if anything fails**
+   ```bash
+   npm run diagnose
+   ```
+
+Typical first-time flow:
+
+1. `npm run setup:core`
+2. Optional: `npm run setup:local-tts`
+3. `npm run start:all`
 
 ## ⚙️ Configuration
 
@@ -48,7 +71,7 @@ A Node.js web application that integrates with Kick.com's chat API using webhook
 
 1. Go to [Kick.com Developer Console](https://kick.com/developer/applications)
 2. Create a new application
-3. Set the redirect URI to: `http://localhost:3000/auth/callback`
+3. Set the redirect URI to: `http://localhost:3001/auth/callback`
 4. Copy the Client ID and Client Secret to your `.env` file
 
 ### 2. Environment Variables
@@ -58,10 +81,47 @@ Update your `.env` file with the following:
 ```env
 KICK_CLIENT_ID=your_kick_client_id_here
 KICK_CLIENT_SECRET=your_kick_client_secret_here
-REDIRECT_URI=http://localhost:3000/auth/callback
+REDIRECT_URI=http://localhost:3001/auth/callback
 SESSION_SECRET=your_random_session_secret_here
-PORT=3000
+PORT=3001
 ```
+
+Minimal required fields for login and chat monitoring are:
+
+- `KICK_CLIENT_ID`
+- `KICK_CLIENT_SECRET`
+- `REDIRECT_URI`
+- `SESSION_SECRET`
+
+### 3. Local Voice Provider Mode (No Cloud Calls)
+
+To keep voice cloning and synthesis fully local, enable local mode:
+
+```env
+LOCAL_TTS_ENABLED=true
+LOCAL_TTS_BASE_URL=http://127.0.0.1:8000
+```
+
+For this repo, the main app is typically run on port 3001 to avoid common conflicts:
+
+```env
+PORT=3001
+REDIRECT_URI=http://localhost:3001/auth/callback
+```
+
+When local mode is enabled, the app calls your localhost voice service and does not use ElevenLabs for new clone/synthesis jobs.
+
+Expected localhost endpoints:
+
+- `POST /clone` (multipart form-data)
+   - fields: `name`, `tag`, `sample_file`
+   - response JSON: `{ "voice_id": "your-local-voice-id" }`
+
+- `POST /synthesize` (application/json)
+   - body: `{ "voice_id": "...", "voice_tag": "...", "text": "..." }`
+   - response: audio bytes (`audio/mpeg` or `audio/wav`)
+
+If local mode is disabled and `ELEVENLABS_API_KEY` is set, the app uses ElevenLabs. If neither is configured, it uses mock mode for workflow testing.
 
 ## 🚀 Usage
 
@@ -76,25 +136,11 @@ Or for development with auto-reload:
 npm run dev
 ```
 
-The application will be available at `http://localhost:3000`
+The application will be available at `http://localhost:3001`.
 
-### 2. Set up ngrok Tunnel
+If you use `npm run start:all`, open `http://localhost:3001`.
 
-In a separate terminal, run:
-```bash
-ngrok http 3000
-```
-
-Copy the HTTPS URL provided by ngrok (e.g., `https://abc123.ngrok.io`)
-
-### 3. Configure Webhooks
-
-You'll need to configure your Kick.com application or use their API to send webhooks to:
-```
-https://your-ngrok-url.ngrok.io/webhook/chat
-```
-
-### 4. Using the Application
+### 2. Using the Application
 
 1. **Authenticate**: Click "OAuth Login with Kick.com" to authenticate
 2. **Enter Channel**: Input the channel name you want to monitor
@@ -107,36 +153,50 @@ https://your-ngrok-url.ngrok.io/webhook/chat
 
 ### Authentication
 - `GET /auth/kick` - Initiates OAuth flow with Kick.com
+- `GET /auth/popup` - Popup OAuth helper endpoint
 - `GET /auth/callback` - OAuth callback endpoint
 - `POST /auth/logout` - Logs out the user
 
-### Chat Control
-- `POST /chat/start` - Starts monitoring a channel
-- `POST /chat/stop` - Stops monitoring
-- `GET /chat/status` - Gets current monitoring status
+### Chat And Status
+- `GET /messages/:channel` - Fetches channel chat history
+- `GET /channel/:channel` - Validates channel access
+- `GET /status` - Current monitoring and auth status
+- `POST /api/get-live-chat-messages` - Polls latest live chat messages
 
-### Webhooks
-- `POST /webhook/chat` - Receives chat messages from Kick.com
+### Voice Management
+- `GET /voices` - Voice library page
+- `GET /api/voices` - List voice metadata and provider mode
+- `POST /api/voices` - Create voice from uploaded sample
+- `PATCH /api/voices/:voiceId` - Update voice name or tag
+- `DELETE /api/voices/:voiceId` - Remove voice and cleanup sample
+- `POST /api/tts/custom` - Synthesize audio for a custom voice tag
 
-### API
-- `GET /api/chat/history` - Gets chat message history
+### Home
+- `GET /` - Main control dashboard
 
 ## 🔧 Development
 
 ### Project Structure
 
 ```
-chat2tts/
+kick-chat-integration/
 ├── server.js              # Main server file
 ├── package.json           # Dependencies and scripts
-├── .env.example          # Environment variables template
+├── .env.example           # Environment variables template
+├── scripts/               # Setup/start/diagnostic scripts
+├── services/              # Voice provider adapter logic
+├── local-tts-service/     # Local Python TTS service
+├── data/                  # Persisted voice metadata
+├── uploads/               # Uploaded voice sample files
 ├── views/
-│   └── index.ejs         # Main HTML template
+│   ├── index.ejs          # Main dashboard
+│   └── voices.ejs         # Voice library UI
 ├── public/
 │   ├── css/
-│   │   └── style.css     # Styles
+│   │   └── style.css      # Styles
 │   └── js/
-│       └── main.js       # Frontend JavaScript
+│       ├── main.js        # Main dashboard frontend logic
+│       └── voices.js      # Voice library frontend logic
 └── .github/
     └── copilot-instructions.md
 ```
@@ -145,7 +205,10 @@ chat2tts/
 
 - `npm start` - Start the production server
 - `npm run dev` - Start development server with nodemon
-- `npm run ngrok` - Quick ngrok tunnel command
+- `npm run setup:core` - Install Node deps and bootstrap `.env`
+- `npm run setup:local-tts` - Install Python 3.11 local TTS dependencies
+- `npm run start:all` - Start main app and local TTS in separate terminals
+- `npm run diagnose` - Environment and service health checks
 
 ## 🔌 WebSocket Events
 
@@ -163,7 +226,7 @@ chat2tts/
 
 - Session data is stored in memory (use Redis in production)
 - HTTPS should be used in production
-- Validate and sanitize all webhook input
+- Validate and sanitize all incoming request input
 - Implement rate limiting for API endpoints
 - Set up proper CORS policies for production
 
@@ -174,17 +237,21 @@ chat2tts/
 1. **OAuth Authentication Fails**
    - Check your Client ID and Client Secret
    - Verify the redirect URI matches your Kick.com app settings
-   - Ensure ngrok tunnel is active if using custom domain
+   - Verify your local app URL and `REDIRECT_URI` are aligned
 
-2. **Webhooks Not Received**
-   - Verify ngrok tunnel is running and URL is correct
-   - Check that webhook URL is properly configured in Kick.com
-   - Monitor server logs for incoming requests
+2. **OAuth Callback Problems**
+   - Confirm `REDIRECT_URI` exactly matches your Kick app redirect URI
+   - Restart the app after updating `.env`
 
 3. **Chat Messages Not Displaying**
    - Ensure WebSocket connection is established
    - Check browser console for JavaScript errors
    - Verify chat monitoring is started
+
+4. **First Local Voice Generation Is Slow**
+   - First local synthesis may download model files and warm up CPU inference
+   - This can take significantly longer than later requests
+   - Use `npm run diagnose` and check `http://127.0.0.1:8000/health`
 
 ### Debug Mode
 

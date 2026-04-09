@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Library | Kick.com Chat Integration</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>🎙️ Voice Library</h1>
+                <p class="page-subtitle">Import voice samples, assign !tags, and track cloning jobs in one place.</p>
+            </div>
+            <div class="auth-status">
+                <a href="/" class="btn btn-secondary">Back to Chat</a>
+                <% if (isAuthenticated) { %>
+                    <span class="status-badge authenticated">✅ Authenticated</span>
+                <% } else { %>
+                    <span class="status-badge not-authenticated">❌ Not Authenticated</span>
+                <% } %>
+            </div>
+        </header>
+
+        <main class="voices-page">
+            <section class="voices-toolbar">
+                <div>
+                    <h2>Custom Voices</h2>
+                    <p>Create reusable voice entries now so the chat command workflow is already in place for real cloning later.</p>
+                </div>
+                <button id="toggleVoiceFormBtn" class="btn btn-primary">Add Voice</button>
+            </section>
+
+            <section id="voiceGuidance" class="app-info voice-guidance">
+                <h3>Upload Guidance</h3>
+                <p id="voiceGuidanceText">Recommended format loading...</p>
+                <p id="providerModeText">Checking provider configuration...</p>
+                <% const initialHealth = (typeof localProviderHealth !== 'undefined' && localProviderHealth) ? localProviderHealth : { status: 'unchecked', reachable: false, baseUrl: '', message: '' }; %>
+                <% const initialHealthStatus = (initialHealth.status === 'online' || initialHealth.reachable === true) ? 'online' : (initialHealth.status === 'offline' ? 'offline' : 'unchecked'); %>
+                <% const initialHealthLabel = initialHealthStatus === 'online' ? 'Online' : (initialHealthStatus === 'offline' ? 'Offline' : 'Not Checked'); %>
+                <div id="localProviderHealthBadge" class="provider-health-badge <%= initialHealthStatus %>">Local TTS: <%= initialHealthLabel %></div>
+                <button id="checkLocalHealthBtn" type="button" class="btn btn-secondary btn-inline">Check Local Health Now</button>
+                <p id="localProviderHealthText">
+                    <% if (initialHealthStatus === 'online') { %>
+                        Local provider health: Online<%= initialHealth.baseUrl ? ` (${initialHealth.baseUrl})` : '' %>.
+                    <% } else if (initialHealthStatus === 'offline') { %>
+                        Local provider health: Offline<%= initialHealth.baseUrl ? ` (${initialHealth.baseUrl})` : '' %>. <%= initialHealth.message || '' %>
+                    <% } else { %>
+                        Local provider health: Not checked<%= initialHealth.baseUrl ? ` (${initialHealth.baseUrl})` : '' %>.
+                    <% } %>
+                </p>
+            </section>
+
+            <section id="voiceFormPanel" class="voice-form-panel" hidden>
+                <h3>New Voice Clone</h3>
+                <form id="voiceUploadForm" class="voice-form">
+                    <div class="voice-form-grid">
+                        <div class="control-group">
+                            <label for="voiceName">Voice Name</label>
+                            <input type="text" id="voiceName" name="name" maxlength="60" placeholder="Streamer Alt Voice" required>
+                        </div>
+                        <div class="control-group">
+                            <label for="voiceTag">Custom !Tag</label>
+                            <input type="text" id="voiceTag" name="tag" maxlength="32" placeholder="custom3" required>
+                        </div>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="sampleFile">Audio Sample</label>
+                        <input type="file" id="sampleFile" name="sampleFile" accept=".wav,.mp3,.flac,.m4a,.aac,audio/*" required>
+                        <p class="field-help">Best baseline: clean WAV, mono, 44.1 kHz or 48 kHz spoken audio with minimal music or background noise.</p>
+                    </div>
+
+                    <div class="button-group compact-actions">
+                        <button type="submit" class="btn btn-success">Queue Voice Processing</button>
+                        <button type="button" id="cancelVoiceFormBtn" class="btn btn-secondary">Cancel</button>
+                    </div>
+                    <div id="voiceFormFeedback" class="form-feedback" aria-live="polite"></div>
+                </form>
+            </section>
+
+            <section class="voice-library-section">
+                <div class="section-heading">
+                    <h3>Voice Jobs</h3>
+                    <span id="voiceCount" class="section-meta"><%= voices.length %> voices</span>
+                </div>
+                <div id="voiceLibraryGrid" class="voice-library-grid">
+                    <% if (!voices.length) { %>
+                        <div class="empty-state">
+                            <h4>No voices queued yet</h4>
+                            <p>Add a voice sample to start testing the custom cloning workflow.</p>
+                        </div>
+                    <% } %>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        window.__INITIAL_VOICES__ = <%- JSON.stringify(voices) %>;
+    </script>
+    <script src="/js/voices.js"></script>
+</body>
+</html>
