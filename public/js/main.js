@@ -30,6 +30,7 @@ let replayCount = 0;
 let speechSynthesis = window.speechSynthesis;
 let displayedMessageCount = 0;
 let displayedMessages = new Map(); // Track displayed messages by ID
+let activeProviderAudio = null;
 
 const TTS_COMMANDS = new Set(['tts', 'custom1', 'custom2']);
 const TTS_VOICE_PROFILES = {
@@ -189,31 +190,80 @@ async function playProviderVoiceAudio(text, voice) {
 
     return new Promise((resolve, reject) => {
         const audio = new Audio(audioUrl);
+        const mutedNow = document.getElementById('ttsMuted')?.checked === true;
+        const volumeSliderValue = parseInt(document.getElementById('ttsVolume')?.value || '80', 10);
+        const normalizedVolume = Math.max(0, Math.min(1, volumeSliderValue / 100));
+
+        audio.volume = mutedNow ? 0 : normalizedVolume;
+        activeProviderAudio = audio;
 
         audio.onended = () => {
             URL.revokeObjectURL(audioUrl);
+            if (activeProviderAudio === audio) {
+                activeProviderAudio = null;
+            }
             resolve();
         };
 
         audio.onerror = () => {
             URL.revokeObjectURL(audioUrl);
+            if (activeProviderAudio === audio) {
+                activeProviderAudio = null;
+            }
             reject(new Error(`Audio playback failed for !${voice}.`));
         };
 
         audio.play().catch((error) => {
             URL.revokeObjectURL(audioUrl);
+            if (activeProviderAudio === audio) {
+                activeProviderAudio = null;
+            }
             reject(error);
         });
     });
 }
 
+function stopTTSImmediately() {
+    if (speechSynthesis) {
+        speechSynthesis.cancel();
+    }
+
+    if (activeProviderAudio) {
+        activeProviderAudio.pause();
+        activeProviderAudio.currentTime = 0;
+        activeProviderAudio = null;
+    }
+
+    ttsQueue = [];
+    isSpeaking = false;
+}
+
+function applyCurrentProviderAudioVolume() {
+    if (!activeProviderAudio) {
+        return;
+    }
+
+    const mutedNow = document.getElementById('ttsMuted')?.checked === true;
+    const volumeSliderValue = parseInt(document.getElementById('ttsVolume')?.value || '80', 10);
+    const normalizedVolume = Math.max(0, Math.min(1, volumeSliderValue / 100));
+    activeProviderAudio.volume = mutedNow ? 0 : normalizedVolume;
+}
+
 // TTS Functions
 function speakText(text, username, voice = 'default', forceReplay = false, onComplete = null) {
     const ttsEnabled = document.getElementById('ttsEnabled')?.checked;
+    const ttsMuted = document.getElementById('ttsMuted')?.checked;
     const ttsSpeed = parseFloat(document.getElementById('ttsSpeed')?.value || 1);
+    const ttsVolume = parseInt(document.getElementById('ttsVolume')?.value || '80', 10);
     
     if (!ttsEnabled || !speechSynthesis) {
         debugLog('🔊 TTS disabled or not available');
+        if (onComplete) onComplete(false);
+        return;
+    }
+
+    if (ttsMuted) {
+        debugLog('🔊 TTS muted - skipping playback');
         if (onComplete) onComplete(false);
         return;
     }
@@ -269,7 +319,7 @@ function speakText(text, username, voice = 'default', forceReplay = false, onCom
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.rate = adjustedRate;
     utterance.pitch = voiceProfile.pitch;
-    utterance.volume = 0.8;
+    utterance.volume = Math.max(0, Math.min(1, ttsVolume / 100));
     
     utterance.onstart = function() {
         isSpeaking = true;
@@ -314,12 +364,41 @@ function processNextInTTSQueue() {
 }
 
 function setupTTSControls() {
+    const ttsEnabledCheckbox = document.getElementById('ttsEnabled');
+    const ttsMutedCheckbox = document.getElementById('ttsMuted');
     const ttsSpeedSlider = document.getElementById('ttsSpeed');
     const speedValueSpan = document.getElementById('speedValue');
+    const ttsVolumeSlider = document.getElementById('ttsVolume');
+    const volumeValueSpan = document.getElementById('volumeValue');
+
+    if (ttsEnabledCheckbox) {
+        ttsEnabledCheckbox.addEventListener('change', function() {
+            if (!this.checked) {
+                stopTTSImmediately();
+            }
+        });
+    }
+
+    if (ttsMutedCheckbox) {
+        ttsMutedCheckbox.addEventListener('change', function() {
+            if (this.checked) {
+                stopTTSImmediately();
+            } else {
+                applyCurrentProviderAudioVolume();
+            }
+        });
+    }
     
     if (ttsSpeedSlider && speedValueSpan) {
         ttsSpeedSlider.addEventListener('input', function() {
             speedValueSpan.textContent = `${this.value}x`;
+        });
+    }
+
+    if (ttsVolumeSlider && volumeValueSpan) {
+        ttsVolumeSlider.addEventListener('input', function() {
+            volumeValueSpan.textContent = `${this.value}%`;
+            applyCurrentProviderAudioVolume();
         });
     }
 }
