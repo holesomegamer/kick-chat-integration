@@ -5,7 +5,28 @@ This document tracks future features and enhancements planned for the Kick.com C
 
 ## Planned Features
 
-### 1. Premium Voice Features
+### 1. TTS Playback Control Modes
+- **Autoplay Mode**: 
+  - Automatically read incoming chat messages as they arrive
+  - Configurable queue system for managing message backlog
+  - Smart filtering to avoid audio overlap/conflicts
+  - Pause/resume functionality during autoplay
+- **Manual Play Mode**:
+  - Queue incoming messages for manual review and selection
+  - Click-to-play individual messages from chat history
+  - Batch selection for playing multiple messages in sequence
+  - Preview mode to see message content before playing
+- **Hybrid Mode**:
+  - Combine both modes with user-defined triggers
+  - Auto-play for specific users (VIPs/mods) and manual for others
+  - Time-based switching (auto during low activity, manual during high activity)
+- **Playback Controls**:
+  - Skip current message
+  - Clear queue functionality
+  - Replay last message
+  - Adjust playback speed per mode
+
+### 2. Premium Voice Features
 - **Custom Voices with !tags**: Add paid feature for custom voice selection using chat commands
 - **AI Voice Cloning**: 
   - Allow users to upload voice samples
@@ -67,6 +88,13 @@ This document tracks future features and enhancements planned for the Kick.com C
 
 ## Technical Considerations
 
+### TTS Playback Architecture
+- Message queue management system for both auto and manual modes
+- Real-time audio status tracking to prevent overlapping playback
+- User preference storage for default playback modes
+- WebSocket integration for instant mode switching
+- Audio interruption and resumption handling
+
 ### Voice Processing
 - Research AI voice generation APIs (ElevenLabs, Azure Cognitive Services, etc.)
 - Local voice file storage and management system
@@ -87,6 +115,7 @@ This document tracks future features and enhancements planned for the Kick.com C
 
 ## Priority Levels
 1. **High Priority**: 
+   - TTS Playback Control Modes (autoplay/manual/hybrid)
    - TTS command filtering (!tts flag requirement)
    - User ban list
    - Polling rate control

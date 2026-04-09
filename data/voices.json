@@ -1,5 +1,22 @@
 [
   {
+    "id": "72b64291-dfad-48be-a941-be109afefb78",
+    "name": "Spencer",
+    "tag": "spencer",
+    "samplePath": "C:\\Webdev\\brandquistit\\kick-chat-integration\\uploads\\voice-samples\\1775754127538-Spencer.mp3",
+    "sampleFileName": "1775754127538-Spencer.mp3",
+    "originalFileName": "Spencer.mp3",
+    "status": "ready",
+    "progress": 100,
+    "provider": "local",
+    "mode": "local",
+    "createdAt": "2026-04-09T17:02:07.626Z",
+    "updatedAt": "2026-04-09T17:02:07.626Z",
+    "error": null,
+    "externalVoiceId": "local-spencer-1775768527",
+    "requiresVerification": false
+  },
+  {
     "id": "887dbb8a-12c9-4f11-961f-05fd6a1ab530",
     "name": "aoc",
     "tag": "aoc",

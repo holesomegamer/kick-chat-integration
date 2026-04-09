@@ -19,5 +19,12 @@
     "tag": "aoc",
     "sample_file": "1775757097609-aoc.mp3",
     "created_at": "2026-04-09T13:51:37.614583Z"
+  },
+  {
+    "id": "local-spencer-1775768527",
+    "name": "Spencer",
+    "tag": "spencer",
+    "sample_file": "1775768527618-spencer.mp3",
+    "created_at": "2026-04-09T17:02:07.622921Z"
   }
 ]
