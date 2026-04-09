@@ -74,26 +74,44 @@ async function createVoiceClone({ name, tag, samplePath }) {
 }
 
 async function createLocalVoiceClone({ name, tag, samplePath }) {
-    const localBaseUrl = getLocalTTSBaseUrl();
-    const form = new FormData();
-    form.append('name', name);
-    form.append('tag', tag);
-    form.append('sample_file', fs.createReadStream(samplePath));
+    try {
+        const localBaseUrl = getLocalTTSBaseUrl();
+        const form = new FormData();
+        form.append('name', name);
+        form.append('tag', tag);
+        form.append('sample_file', fs.createReadStream(samplePath));
 
-    const response = await axios.post(`${localBaseUrl}/clone`, form, {
-        headers: {
-            ...form.getHeaders()
-        },
-        maxBodyLength: Infinity,
-        maxContentLength: Infinity
-    });
+        const response = await axios.post(`${localBaseUrl}/clone`, form, {
+            headers: {
+                ...form.getHeaders()
+            },
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity
+        });
 
-    return {
-        provider: 'local',
-        externalVoiceId: response.data.voice_id || response.data.id || tag,
-        requiresVerification: false,
-        mode: 'local'
-    };
+        return {
+            provider: 'local',
+            externalVoiceId: response.data.voice_id || response.data.id || tag,
+            requiresVerification: false,
+            mode: 'local',
+            status: 'ready',
+            error: null
+        };
+    } catch (error) {
+        // Handle axios errors properly
+        if (error.response) {
+            const statusCode = error.response.status;
+            const errorData = error.response.data;
+            
+            if (statusCode === 409) {
+                throw new Error(`Voice tag "${tag}" already exists. Please choose a different tag.`);
+            }
+            
+            throw new Error(errorData.detail || errorData.message || `HTTP ${statusCode} error from local TTS service`);
+        }
+        
+        throw new Error(`Failed to connect to local TTS service: ${error.message}`);
+    }
 }
 
 function simulateVoiceClone({ tag }) {

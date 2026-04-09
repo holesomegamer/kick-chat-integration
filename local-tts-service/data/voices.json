@@ -1,37 +1,23 @@
 [
   {
-    "id": "local-localstub-1775708002",
-    "name": "Local Stub Voice",
-    "tag": "localstub",
-    "sample_file": "1775708002883-localstub.wav",
-    "created_at": "2026-04-09T00:13:22.883827Z"
+    "id": "local-nick-1775756837",
+    "name": "nick",
+    "tag": "nick",
+    "sample_file": "1775756837342-nick.mp3",
+    "created_at": "2026-04-09T13:47:17.351659Z"
   },
   {
-    "id": "local-me-1775710206",
-    "name": "me",
-    "tag": "me",
-    "sample_file": "1775710206142-me.wav",
-    "created_at": "2026-04-09T00:50:06.147227Z"
+    "id": "local-charlie-1775757085",
+    "name": "charlie kirk",
+    "tag": "charlie",
+    "sample_file": "1775757085397-charlie.mp3",
+    "created_at": "2026-04-09T13:51:25.404033Z"
   },
   {
-    "id": "local-me1-1775710437",
-    "name": "me1",
-    "tag": "me1",
-    "sample_file": "1775710436999-me1.wav",
-    "created_at": "2026-04-09T00:53:57.001378Z"
-  },
-  {
-    "id": "local-alex-1775711690",
-    "name": "alex jones",
-    "tag": "alex",
-    "sample_file": "1775711690117-alex.mp3",
-    "created_at": "2026-04-09T01:14:50.124688Z"
-  },
-  {
-    "id": "local-keith-1775711978",
-    "name": "keith",
-    "tag": "keith",
-    "sample_file": "1775711978255-keith.mp3",
-    "created_at": "2026-04-09T01:19:38.256858Z"
+    "id": "local-aoc-1775757097",
+    "name": "aoc",
+    "tag": "aoc",
+    "sample_file": "1775757097609-aoc.mp3",
+    "created_at": "2026-04-09T13:51:37.614583Z"
   }
 ]
