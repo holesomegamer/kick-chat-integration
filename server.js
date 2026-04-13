@@ -85,6 +85,101 @@ let connectedClients = [];
 let chatHistory = [];
 const CHAT_ROUTE_DEBUG_LOGS = process.env.CHAT_DEBUG_LOGS === '1';
 const CHAT_CACHE_TTL_MS = 10 * 60 * 1000;
+// Cache for user lookups to avoid repeated API calls
+const userLookupCache = new Map();
+const USER_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+async function lookupUsernameById(userId, accessToken) {
+    if (!userId || !accessToken) {
+        return null;
+    }
+
+    const cacheKey = String(userId);
+    const cached = userLookupCache.get(cacheKey);
+    
+    // Check if we have a valid cached entry
+    if (cached && (Date.now() - cached.timestamp) < USER_CACHE_DURATION) {
+        return cached.username;
+    }
+
+    // Try multiple different endpoint formats that Kick might use
+    const endpointsToTry = [
+        `https://kick.com/api/v2/users/${userId}`,
+        `https://kick.com/api/v1/users/${userId}`, 
+        `https://kick.com/api/user/${userId}`,
+        `https://kick.com/api/users/${userId}`,
+        `${KICK_API_BASE_URL}/api/v2/users/${userId}`,
+        `${KICK_API_BASE_URL}/api/v1/users/${userId}`,
+        `${KICK_API_BASE_URL}/user/${userId}`,
+        `${KICK_API_BASE_URL}/users/${userId}`,
+        // Try public endpoints without authentication
+        `https://kick.com/api/v1/users/${userId}/profile`,
+        `https://kick.com/api/v2/users/${userId}/profile`
+    ];
+
+    for (const [index, endpoint] of endpointsToTry.entries()) {
+        try {
+            console.log(`👤 Trying endpoint ${index + 1}/${endpointsToTry.length}: ${endpoint}`);
+            
+            const headers = {
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            };
+            
+            // Add auth header only for authenticated endpoints
+            if (endpoint.includes('api/v1') || endpoint.includes('api/v2')) {
+                headers['Authorization'] = `Bearer ${accessToken}`;
+            }
+
+            const response = await axios.get(endpoint, {
+                headers,
+                timeout: 5000
+            });
+
+            console.log(`👤 Response from ${endpoint}:`, JSON.stringify(response.data, null, 2));
+
+            // Try different username field names
+            const username = response.data?.username 
+                || response.data?.slug 
+                || response.data?.user?.username
+                || response.data?.user?.slug
+                || response.data?.name
+                || response.data?.display_name
+                || response.data?.user?.name
+                || response.data?.user?.display_name;
+                
+            if (username) {
+                // Cache the result
+                userLookupCache.set(cacheKey, {
+                    username: username,
+                    timestamp: Date.now()
+                });
+                console.log(`👤 SUCCESS! Resolved user ID ${userId} -> ${username} (via endpoint ${index + 1})`);
+                return username;
+            } else {
+                console.log(`👤 No username found in response from ${endpoint}`);
+            }
+        } catch (error) {
+            console.log(`👤 Endpoint ${index + 1} failed (${error.response?.status || error.code}): ${error.message}`);
+        }
+    }
+
+    console.warn(`⚠️ All ${endpointsToTry.length} username lookup attempts failed for ID ${userId}`);
+    return null;
+}
+
+function cleanupUserCache() {
+    const cutoff = Date.now() - USER_CACHE_DURATION;
+    for (const [userId, entry] of userLookupCache.entries()) {
+        if (entry.timestamp < cutoff) {
+            userLookupCache.delete(userId);
+        }
+    }
+}
+
+// Clean up cache periodically
+setInterval(cleanupUserCache, USER_CACHE_DURATION);
+
 const CHANNEL_POINT_EVENT_RETENTION_MS = 60 * 60 * 1000;
 const KICK_API_BASE_URL = 'https://api.kick.com';
 const KICK_PUBLIC_KEY_URL = `${KICK_API_BASE_URL}/public/v1/public-key`;
@@ -115,6 +210,25 @@ let ttsTriggerSettings = {
     subscriptionError: null,
     subscriptionUpdatedAt: null
 };
+
+// User moderation and permission settings
+let moderationSettings = {
+    banList: new Set(), // Set of banned usernames (case-insensitive)
+    permissionMode: 'all', // 'all', 'subscribers_only', 'moderators_only', 'vips_only'
+    enableBanList: true,
+    enablePermissionFilter: false
+};
+
+// Track logged ban messages to avoid spam
+const loggedBannedUsers = new Set();
+const loggedPermissionUsers = new Set();
+
+// Clear logged user sets periodically (every 5 minutes)
+setInterval(() => {
+    loggedBannedUsers.clear();
+    loggedPermissionUsers.clear();
+    console.log('🧹 Cleared moderation logging cache');
+}, 5 * 60 * 1000);
 
 function normalizeComparableText(value) {
     return String(value || '').trim().toLowerCase();
@@ -151,6 +265,64 @@ function toTimestampMs(value) {
     }
 
     return null;
+}
+
+// Moderation helper functions
+function isUserBanned(username) {
+    if (!moderationSettings.enableBanList || !username) {
+        return false;
+    }
+    return moderationSettings.banList.has(normalizeComparableText(username));
+}
+
+function hasPermissionToSpeak(message) {
+    if (!moderationSettings.enablePermissionFilter) {
+        return true;
+    }
+    
+    const badges = message.badges || message.sender?.identity?.badges || [];
+    const username = message.user || message.sender?.username || message.username;
+    
+    switch (moderationSettings.permissionMode) {
+        case 'subscribers_only':
+            return badges.some(badge => badge.type === 'subscriber' || badge.slug === 'subscriber');
+        case 'moderators_only':
+            return badges.some(badge => badge.type === 'moderator' || badge.slug === 'moderator');
+        case 'vips_only':
+            return badges.some(badge => badge.type === 'vip' || badge.slug === 'vip');
+        case 'all':
+        default:
+            return true;
+    }
+}
+
+function shouldProcessMessage(message) {
+    // This function now just adds moderation metadata to messages
+    // All messages are included in the chat display
+    const username = message.user || message.sender?.username || message.username;
+    
+    // Check ban status
+    const isBanned = isUserBanned(username);
+    if (isBanned && !loggedBannedUsers.has(username)) {
+        console.log(`🚫 User is banned (messages will show with banned tag): ${username}`);
+        loggedBannedUsers.add(username);
+    }
+    
+    // Check permission requirements  
+    const hasPermission = hasPermissionToSpeak(message);
+    if (!hasPermission && !loggedPermissionUsers.has(username)) {
+        console.log(`🔒 User lacks required permissions for ${moderationSettings.permissionMode} mode: ${username}`);
+        loggedPermissionUsers.add(username);
+    }
+    
+    // Add moderation flags to message for frontend processing
+    message.moderationFlags = {
+        isBanned: isBanned,
+        hasPermission: hasPermission,
+        autoTtsEligible: !isBanned && hasPermission // Only eligible for auto TTS if not banned and has permissions
+    };
+    
+    return true; // Always include message in display
 }
 
 function pruneProcessedRedemptions() {
@@ -260,11 +432,57 @@ async function verifyKickWebhookSignature(req) {
     return verifier.verify(publicKey, signature, 'base64');
 }
 
-function buildChannelPointEventMessage(redemptionPayload) {
+async function buildChannelPointEventMessage(redemptionPayload, accessToken = null) {
     const rewardTitle = String(redemptionPayload.reward?.title || '').trim();
     const userInput = String(redemptionPayload.user_input || '').trim();
-    const redeemerName = redemptionPayload.redeemer?.username || 'Unknown';
+    
+    console.log('🎟️ Full channel point redemption payload:');
+    console.log(JSON.stringify(redemptionPayload, null, 2));
+    
+    // Try to get username from payload first
+    let redeemerName = redemptionPayload.redeemer?.username 
+        || redemptionPayload.user?.username 
+        || redemptionPayload.username
+        || redemptionPayload.redeemer?.user?.username
+        || redemptionPayload.redeemer?.display_name
+        || redemptionPayload.user?.display_name
+        || redemptionPayload.display_name;
+    
+    // If no username in payload, try to lookup by user_id
+    if (!redeemerName && redemptionPayload.redeemer?.user_id && accessToken) {
+        console.log(`👤 No username in payload, looking up user ID: ${redemptionPayload.redeemer.user_id}`);
+        redeemerName = await lookupUsernameById(redemptionPayload.redeemer.user_id, accessToken);
+    }
+    
+    // Final fallback
+    if (!redeemerName) {
+        redeemerName = `User_${redemptionPayload.redeemer?.user_id || 'Unknown'}`;
+    }
+    
+    console.log('🎟️ Username extraction result:', {
+        'final_username': redeemerName,
+        'user_id': redemptionPayload.redeemer?.user_id
+    });
+    
     const broadcasterChannel = String(redemptionPayload.broadcaster?.channel_slug || '').trim().toLowerCase();
+
+    // Parse TTS voice from user input (same logic as chat commands)
+    let ttsVoice = 'default';
+    let ttsText = userInput;
+    let ttsEligible = true;
+    
+    if (userInput) {
+        const match = userInput.match(/^!(\w+)\s+([\s\S]+)$/i);
+        if (match) {
+            const command = match[1].toLowerCase();
+            const parsedText = match[2].trim();
+            if (parsedText.length > 0) {
+                ttsVoice = command === 'tts' ? 'default' : command;
+                ttsText = parsedText;
+                console.log(`🎟️ Parsed TTS command: !${command} -> voice: ${ttsVoice}, text: "${ttsText}"`);
+            }
+        }
+    }
 
     return {
         id: `reward:${redemptionPayload.id}`,
@@ -278,9 +496,9 @@ function buildChannelPointEventMessage(redemptionPayload) {
         color: null,
         type: 'channel_point_redemption',
         played: false,
-        ttsEligible: true,
-        ttsText: userInput,
-        ttsVoice: 'default',
+        ttsEligible,
+        ttsText,
+        ttsVoice,
         rewardTitle,
         broadcasterChannel,
         redemptionStatus: redemptionPayload.status,
@@ -306,7 +524,7 @@ function flattenRedemptionGroups(payload) {
     return flattened;
 }
 
-function queueChannelPointRedemption(redemptionPayload) {
+async function queueChannelPointRedemption(redemptionPayload, accessToken = null) {
     const redemptionId = String(redemptionPayload?.id || '').trim();
     const rewardTitle = String(redemptionPayload?.reward?.title || '').trim();
     const userInput = String(redemptionPayload?.user_input || '').trim();
@@ -333,7 +551,8 @@ function queueChannelPointRedemption(redemptionPayload) {
         return { accepted: false, reason: 'duplicate_redemption' };
     }
 
-    const channelPointMessage = buildChannelPointEventMessage(redemptionPayload);
+    // Build message with access token for username lookup (await since it's now async)
+    const channelPointMessage = await buildChannelPointEventMessage(redemptionPayload, accessToken);
     processedRedemptionIds.set(redemptionId, Date.now());
     channelPointEvents = channelPointEvents.filter((entry) => entry.id !== channelPointMessage.id);
     channelPointEvents.unshift(channelPointMessage);
@@ -453,7 +672,7 @@ async function acceptPendingRewardRedemptions(accessToken, redemptionIds) {
     }
 }
 
-async function pollChannelPointRedemptions(accessToken) {
+async function pollChannelPointRedemptions(accessToken, sinceTimestamp = null) {
     if (ttsTriggerSettings.mode === 'chat_commands') {
         return [];
     }
@@ -497,7 +716,24 @@ async function pollChannelPointRedemptions(accessToken) {
         return [];
     }
 
-    flattenedRedemptions.sort((left, right) => {
+    // Filter by timestamp if provided (only get redemptions since monitoring started)
+    let filteredRedemptions = flattenedRedemptions;
+    if (sinceTimestamp) {
+        const sinceMs = toTimestampMs(sinceTimestamp);
+        if (sinceMs !== null) {
+            const graceMs = 5000; // 5 second grace period
+            filteredRedemptions = flattenedRedemptions.filter((redemption) => {
+                const redeemedMs = toTimestampMs(redemption.redeemed_at);
+                if (redeemedMs === null) {
+                    return true; // Include redemptions without valid timestamps
+                }
+                return redeemedMs > (sinceMs - graceMs);
+            });
+            console.log(`🎟️ Filtered ${flattenedRedemptions.length} redemptions to ${filteredRedemptions.length} since ${sinceTimestamp}`);
+        }
+    }
+
+    filteredRedemptions.sort((left, right) => {
         const rightMs = toTimestampMs(right.redeemed_at) || 0;
         const leftMs = toTimestampMs(left.redeemed_at) || 0;
         return rightMs - leftMs;
@@ -506,8 +742,8 @@ async function pollChannelPointRedemptions(accessToken) {
     const acceptedPendingIds = [];
     const queuedMessages = [];
 
-    for (const redemption of flattenedRedemptions) {
-        const result = queueChannelPointRedemption(redemption);
+    for (const redemption of filteredRedemptions) {
+        const result = await queueChannelPointRedemption(redemption, accessToken);
         if (result.accepted && result.message) {
             queuedMessages.push(result.message);
             if (normalizeComparableText(redemption.status) === 'pending') {
@@ -932,6 +1168,89 @@ app.post('/api/tts/settings', (req, res) => {
     });
 });
 
+// Moderation API endpoints
+app.get('/api/moderation/settings', (req, res) => {
+    res.json({
+        success: true,
+        settings: {
+            banList: Array.from(moderationSettings.banList),
+            permissionMode: moderationSettings.permissionMode,
+            enableBanList: moderationSettings.enableBanList,
+            enablePermissionFilter: moderationSettings.enablePermissionFilter
+        }
+    });
+});
+
+app.post('/api/moderation/settings', (req, res) => {
+    const { permissionMode, enableBanList, enablePermissionFilter } = req.body;
+    
+    const validModes = ['all', 'subscribers_only', 'moderators_only', 'vips_only'];
+    if (permissionMode && !validModes.includes(permissionMode)) {
+        return res.status(400).json({
+            success: false,
+            error: 'Invalid permission mode. Must be: all, subscribers_only, moderators_only, or vips_only'
+        });
+    }
+    
+    if (permissionMode) moderationSettings.permissionMode = permissionMode;
+    if (typeof enableBanList === 'boolean') moderationSettings.enableBanList = enableBanList;
+    if (typeof enablePermissionFilter === 'boolean') moderationSettings.enablePermissionFilter = enablePermissionFilter;
+    
+    res.json({
+        success: true,
+        settings: {
+            banList: Array.from(moderationSettings.banList),
+            permissionMode: moderationSettings.permissionMode,
+            enableBanList: moderationSettings.enableBanList,
+            enablePermissionFilter: moderationSettings.enablePermissionFilter
+        }
+    });
+});
+
+app.post('/api/moderation/ban', (req, res) => {
+    const { username } = req.body;
+    if (!username || typeof username !== 'string') {
+        return res.status(400).json({
+            success: false,
+            error: 'Username is required'
+        });
+    }
+    
+    const normalizedUsername = normalizeComparableText(username);
+    moderationSettings.banList.add(normalizedUsername);
+    
+    console.log(`🚫 Added user to ban list: ${username}`);
+    
+    res.json({
+        success: true,
+        banList: Array.from(moderationSettings.banList),
+        message: `User ${username} added to ban list`
+    });
+});
+
+app.delete('/api/moderation/ban/:username', (req, res) => {
+    const { username } = req.params;
+    if (!username) {
+        return res.status(400).json({
+            success: false,
+            error: 'Username is required'
+        });
+    }
+    
+    const normalizedUsername = normalizeComparableText(username);
+    const wasRemoved = moderationSettings.banList.delete(normalizedUsername);
+    
+    if (wasRemoved) {
+        console.log(`✅ Removed user from ban list: ${username}`);
+    }
+    
+    res.json({
+        success: true,
+        banList: Array.from(moderationSettings.banList),
+        message: wasRemoved ? `User ${username} removed from ban list` : `User ${username} was not in ban list`
+    });
+});
+
 app.post('/api/kick/channel-point-subscription', async (req, res) => {
     const accessToken = req.session.accessToken;
     if (!accessToken) {
@@ -980,7 +1299,9 @@ app.post(KICK_WEBHOOK_PATH, async (req, res) => {
             return res.status(202).json({ success: true, ignored: true, eventType });
         }
 
-        const result = queueChannelPointRedemption(req.body || {});
+        // Get access token for username lookup (may not be available in webhook context)
+        const accessToken = req.session?.accessToken || null;
+        const result = await queueChannelPointRedemption(req.body || {}, accessToken);
         res.json({
             success: true,
             processed: result.accepted,
@@ -1420,17 +1741,49 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
                                 
                                 // Process ALL messages for display and TTS (no slice limit)
                                 let processedMessages = messages.map(msg => {
+                                    const username = msg.sender?.username || msg.user?.username || msg.username || 'Unknown';
+                                    const userId = msg.sender?.id || msg.user?.id || msg.user_id || msg.id;
+                                    
+                                    // Cache username/user_id mapping from chat messages (only log new entries)
+                                    if (username && username !== 'Unknown' && userId) {
+                                        const cacheKey = String(userId);
+                                        const existingEntry = userLookupCache.get(cacheKey);
+                                        
+                                        // Only cache and log if it's a new username or expired entry
+                                        if (!existingEntry || (Date.now() - existingEntry.timestamp) >= USER_CACHE_DURATION) {
+                                            userLookupCache.set(cacheKey, {
+                                                username: username,
+                                                timestamp: Date.now()
+                                            });
+                                            console.log(`👤 Cached username: ${userId} -> ${username}`);
+                                        }
+                                    }
+                                    
                                     return {
                                         id: msg.id || Date.now(),
-                                        user: msg.sender?.username || msg.user?.username || msg.username || 'Unknown',
+                                        user: username,
                                         message: msg.content || msg.message || msg.text || String(msg),
                                         timestamp: msg.created_at || msg.timestamp || new Date().toISOString(),
                                         badges: msg.sender?.identity?.badges || msg.badges || [],
                                         color: msg.sender?.identity?.color || null,
                                         type: msg.type || 'message',
                                         played: false, // Initialize played flag for TTS replay control
-                                        raw: msg // Include raw message for debugging
+                                        raw: msg, // Include raw message for debugging
+                                        moderationFlags: null // Will be set by shouldProcessMessage
                                     };
+                                });
+                                
+                                // Apply moderation flags to all messages (but don't filter them out)
+                                processedMessages.forEach(msg => shouldProcessMessage(msg));
+                                
+                                // Transfer moderation flags from temp message to processed message
+                                processedMessages.forEach(msg => {
+                                    if (msg.moderationFlags) {
+                                        // Copy flags to the message object for frontend use
+                                        msg.isBanned = msg.moderationFlags.isBanned;
+                                        msg.hasPermission = msg.moderationFlags.hasPermission;
+                                        msg.autoTtsEligible = msg.moderationFlags.autoTtsEligible;
+                                    }
                                 });
                                 
                                 // Filter by timestamp if provided (only messages AFTER monitoring started)
@@ -1513,7 +1866,7 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
             }
         }
         
-        await pollChannelPointRedemptions(access_token);
+        await pollChannelPointRedemptions(access_token, since_timestamp);
 
         const queuedChannelPointMessages = getQueuedChannelPointEventsSince(since_timestamp)
             .filter((message) => {

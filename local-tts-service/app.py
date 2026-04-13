@@ -1,9 +1,17 @@
 import json
 import threading
+import time
+import warnings
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+
+# Suppress common ML library deprecation warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="diffusers")
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*LoRACompatibleLinear.*")
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*torch.backends.cuda.sdp_kernel.*")
+warnings.filterwarnings("ignore", message=".*sdpa.*attention does not support.*output_attentions.*")
 
 import torch
 import torchaudio
@@ -32,9 +40,29 @@ def _get_model():
                 _tts_model_loaded = True
                 try:
                     from chatterbox.tts import ChatterboxTTS
-                    print("[TTS] Loading Chatterbox model (CPU) — first load downloads ~1 GB from HuggingFace …")
-                    _tts_model = ChatterboxTTS.from_pretrained(device="cpu")
-                    print("[TTS] Chatterbox model ready.")
+                    
+                    # Determine best device (GPU if available, otherwise CPU)
+                    device = "cuda" if torch.cuda.is_available() else "cpu"
+                    print(f"[TTS] Loading Chatterbox model ({device.upper()}) — first load downloads ~1 GB from HuggingFace …")
+                    
+                    # Enable GPU optimizations if available
+                    if device == "cuda":
+                        # Enable mixed precision and optimizations
+                        torch.backends.cudnn.benchmark = True
+                        torch.backends.cuda.matmul.allow_tf32 = True
+                        print(f"[TTS] GPU detected: {torch.cuda.get_device_name(0)} with {torch.cuda.get_device_properties(0).total_memory // (1024**3)}GB VRAM")
+                    
+                    _tts_model = ChatterboxTTS.from_pretrained(device=device)
+                    
+                    # Apply torch.compile for faster inference (PyTorch 2.0+)
+                    try:
+                        if hasattr(torch, 'compile') and device == "cuda":
+                            print("[TTS] Applying torch.compile optimization...")
+                            _tts_model.model = torch.compile(_tts_model.model, mode="reduce-overhead")
+                    except Exception as compile_err:
+                        print(f"[TTS] torch.compile failed (continuing without): {compile_err}")
+                    
+                    print(f"[TTS] Chatterbox model ready on {device.upper()}.")
                 except Exception as exc:
                     print(f"[TTS] Failed to load Chatterbox model: {exc}")
                     _tts_model = None
@@ -45,12 +73,26 @@ def _synthesize_chatterbox(text: str, sample_path: Path) -> bytes:
     model = _get_model()
     if model is None:
         raise RuntimeError("Chatterbox model unavailable — falling back to stub")
-    wav: torch.Tensor = model.generate(text, audio_prompt_path=str(sample_path))
+    
+    start_time = time.time()
+    
+    # Use automatic mixed precision for GPU inference
+    with torch.inference_mode():  # More efficient than torch.no_grad()
+        if torch.cuda.is_available():
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                wav: torch.Tensor = model.generate(text, audio_prompt_path=str(sample_path))
+        else:
+            wav: torch.Tensor = model.generate(text, audio_prompt_path=str(sample_path))
+    
     if wav.dim() == 1:
         wav = wav.unsqueeze(0)
     buf = BytesIO()
     torchaudio.save(buf, wav.cpu(), sample_rate=24000, format="wav")
     buf.seek(0)
+    
+    synthesis_time = time.time() - start_time
+    print(f"[TTS] Generated audio in {synthesis_time:.2f}s ({len(text)} chars)")
+    
     return buf.read()
 
 

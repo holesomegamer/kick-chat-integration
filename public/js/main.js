@@ -12,6 +12,16 @@ const chatContainer = document.getElementById('liveChatMessages');
 const statusDisplay = document.getElementById('statusDisplay');
 const messageCount = document.getElementById('messageCount');
 
+// Moderation DOM elements
+const enableBanListCheckbox = document.getElementById('enableBanList');
+const enablePermissionFilterCheckbox = document.getElementById('enablePermissionFilter');
+const permissionModeSelect = document.getElementById('permissionModeSelect');
+const banUsernameInput = document.getElementById('banUsernameInput');
+const addBanBtn = document.getElementById('addBanBtn');
+const banListContainer = document.getElementById('banList');
+const saveModerationSettingsBtn = document.getElementById('saveModerationSettingsBtn');
+const loadModerationSettingsBtn = document.getElementById('loadModerationSettingsBtn');
+
 // State variables
 let isMonitoring = false;
 let currentChannel = '';
@@ -40,6 +50,15 @@ let modeSpeedMultipliers = {
     autoplay: 1,
     manual: 1,
     hybrid: 1
+};
+let lastTriggerModeChangeTime = 0; // Track when user last changed trigger mode
+
+// Moderation state variables
+let moderationSettings = {
+    banList: [],
+    permissionMode: 'all',
+    enableBanList: true,
+    enablePermissionFilter: false
 };
 
 const TTS_COMMANDS = new Set(['tts', 'custom1', 'custom2']);
@@ -115,12 +134,156 @@ function formatTimestamp(timestamp) {
     }
 }
 
+// Moderation functions
+async function loadModerationSettings() {
+    try {
+        const response = await fetch('/api/moderation/settings');
+        const data = await response.json();
+        
+        if (data.success) {
+            moderationSettings = data.settings;
+            updateModerationUI();
+            debugLog('✅ Moderation settings loaded:', moderationSettings);
+        } else {
+            debugLog('❌ Failed to load moderation settings:', data.error);
+        }
+    } catch (error) {
+        debugLog('❌ Error loading moderation settings:', error);
+    }
+}
+
+async function saveModerationSettings() {
+    try {
+        const response = await fetch('/api/moderation/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                permissionMode: moderationSettings.permissionMode,
+                enableBanList: moderationSettings.enableBanList,
+                enablePermissionFilter: moderationSettings.enablePermissionFilter
+            })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            debugLog('✅ Moderation settings saved');
+            showStatusMessage('Moderation settings saved successfully');
+        } else {
+            debugLog('❌ Failed to save moderation settings:', data.error);
+            showStatusMessage('Failed to save moderation settings: ' + data.error, 'error');
+        }
+    } catch (error) {
+        debugLog('❌ Error saving moderation settings:', error);
+        showStatusMessage('Error saving moderation settings', 'error');
+    }
+}
+
+async function banUser(username) {
+    try {
+        const response = await fetch('/api/moderation/ban', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username })
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            moderationSettings.banList = data.banList;
+            updateBanListDisplay();
+            debugLog(`✅ Banned user: ${username}`);
+            showStatusMessage(`User ${username} has been banned`);
+        } else {
+            debugLog('❌ Failed to ban user:', data.error);
+            showStatusMessage('Failed to ban user: ' + data.error, 'error');
+        }
+    } catch (error) {
+        debugLog('❌ Error banning user:', error);
+        showStatusMessage('Error banning user', 'error');
+    }
+}
+
+async function unbanUser(username) {
+    try {
+        const response = await fetch(`/api/moderation/ban/${encodeURIComponent(username)}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            moderationSettings.banList = data.banList;
+            updateBanListDisplay();
+            debugLog(`✅ Unbanned user: ${username}`);
+            showStatusMessage(`User ${username} has been unbanned`);
+        } else {
+            debugLog('❌ Failed to unban user:', data.error);
+            showStatusMessage('Failed to unban user: ' + data.error, 'error');
+        }
+    } catch (error) {
+        debugLog('❌ Error unbanning user:', error);
+        showStatusMessage('Error unbanning user', 'error');
+    }
+}
+
+function updateModerationUI() {
+    if (enableBanListCheckbox) enableBanListCheckbox.checked = moderationSettings.enableBanList;
+    if (enablePermissionFilterCheckbox) enablePermissionFilterCheckbox.checked = moderationSettings.enablePermissionFilter;
+    if (permissionModeSelect) permissionModeSelect.value = moderationSettings.permissionMode;
+    updateBanListDisplay();
+}
+
+function updateBanListDisplay() {
+    if (!banListContainer) return;
+    
+    if (moderationSettings.banList.length === 0) {
+        banListContainer.innerHTML = '<p class="ban-list-empty">No banned users</p>';
+    } else {
+        const bannedUsersHtml = moderationSettings.banList.map(username => `
+            <div class="banned-user">
+                <span class="username">${escapeHtml(username)}</span>
+                <button class="unban-btn" onclick="unbanUser('${escapeHtml(username)}')">Unban</button>
+            </div>
+        `).join('');
+        banListContainer.innerHTML = bannedUsersHtml;
+    }
+}
+
+function showStatusMessage(message, type = 'success') {
+    // Create or update a status message element
+    let statusEl = document.getElementById('moderation-status-message');
+    if (!statusEl) {
+        statusEl = document.createElement('div');
+        statusEl.id = 'moderation-status-message';
+        statusEl.style.cssText = `
+            position: fixed; top: 20px; right: 20px; z-index: 1000; 
+            padding: 12px 16px; border-radius: 4px; font-weight: bold;
+            ${type === 'error' ? 'background: #dc3545; color: white;' : 'background: #28a745; color: white;'}
+        `;
+        document.body.appendChild(statusEl);
+    }
+    
+    statusEl.textContent = message;
+    statusEl.className = type;
+    
+    // Remove after 3 seconds
+    setTimeout(() => {
+        if (statusEl && statusEl.parentNode) {
+            statusEl.parentNode.removeChild(statusEl);
+        }
+    }, 3000);
+}
+
 function getTTSDirective(msg) {
+    // First, check if this is a pre-processed channel point redemption or TTS-eligible message
     if (msg && msg.ttsEligible === true && typeof msg.ttsText === 'string') {
         const parsedText = msg.ttsText.trim();
         const requestedVoice = typeof msg.ttsVoice === 'string' && msg.ttsVoice.trim().length > 0
             ? msg.ttsVoice.trim().toLowerCase()
             : 'default';
+        debugLog(`🎟️ Channel point redemption TTS directive - eligible: ${parsedText.length > 0}, text: "${parsedText}", voice: ${requestedVoice}`);
         return {
             eligible: parsedText.length > 0,
             text: parsedText,
@@ -128,7 +291,10 @@ function getTTSDirective(msg) {
         };
     }
 
+    // If we're in channel_points mode and this isn't a pre-processed message,
+    // then it's a regular chat message and should be ignored
     if (ttsTriggerMode === 'channel_points') {
+        debugLog(`💬 Regular chat message ignored (channel_points mode): "${msg?.message}"`);
         return {
             eligible: false,
             text: '',
@@ -136,12 +302,14 @@ function getTTSDirective(msg) {
         };
     }
 
+    // Handle regular chat commands (only when in chat_commands or both mode)
     const rawText = typeof msg?.message === 'string' ? msg.message.trim() : '';
     const match = rawText.match(/^!(\w+)\s+([\s\S]+)$/i);
     const command = match?.[1]?.toLowerCase();
     const parsedText = match?.[2]?.trim() || '';
     if (command && (TTS_COMMANDS.has(command) || command.length > 0) && parsedText.length > 0) {
         const requestedVoice = command === 'tts' ? 'default' : command;
+        debugLog(`💬 Chat command TTS directive - eligible: true, command: !${command}, text: "${parsedText}", voice: ${requestedVoice}`);
         return {
             eligible: true,
             text: parsedText,
@@ -149,6 +317,7 @@ function getTTSDirective(msg) {
         };
     }
 
+    debugLog(`❌ No TTS directive found for message: "${rawText}" (mode: ${ttsTriggerMode})`);
     return {
         eligible: false,
         text: '',
@@ -336,13 +505,22 @@ function applyTtsSettings(settings) {
         return;
     }
 
-    ttsTriggerMode = settings.mode || 'chat_commands';
+    // Don't override trigger mode if user changed it recently (within last 10 seconds)
+    const timeSinceUserChange = Date.now() - lastTriggerModeChangeTime;
+    const shouldUpdateTriggerMode = timeSinceUserChange > 10000; // 10 seconds
+    
+    if (shouldUpdateTriggerMode && settings.mode) {
+        ttsTriggerMode = settings.mode;
+    } else if (!shouldUpdateTriggerMode) {
+        debugLog(`🔧 Preserving user's recent trigger mode change (${timeSinceUserChange}ms ago)`);
+    }
+    
     channelPointsRewardTitle = settings.channelPointsRewardTitle || 'Test-tts';
 
     const triggerModeSelect = document.getElementById('ttsTriggerModeSelect');
     const rewardTitleInput = document.getElementById('channelPointsRewardTitleInput');
 
-    if (triggerModeSelect) {
+    if (triggerModeSelect && shouldUpdateTriggerMode) {
         triggerModeSelect.value = ttsTriggerMode;
     }
 
@@ -774,8 +952,13 @@ function setupTTSControls() {
     if (ttsTriggerModeSelect) {
         ttsTriggerModeSelect.addEventListener('change', function() {
             ttsTriggerMode = this.value;
+            lastTriggerModeChangeTime = Date.now(); // Track when user changed this
             updateTriggerModeDescription();
             updateMessageStats();
+            
+            // Auto-save the setting when changed
+            debugLog(`🔧 Trigger mode changed to: ${ttsTriggerMode} - saving automatically`);
+            saveTtsTriggerSettings();
         });
     }
 
@@ -951,7 +1134,19 @@ function displayChatMessages(messages) {
         debugLog(`📋 Message fields: user=${msg.user}, message=${msg.message}, timestamp=${msg.timestamp}`);
         
         const messageDiv = document.createElement('div');
-        messageDiv.className = 'chat-message';
+        let messageClasses = 'chat-message';
+        
+        // Add banned class if user is banned
+        if (msg.isBanned) {
+            messageClasses += ' banned-message';
+        }
+        
+        // Add permission class if user lacks permissions
+        if (!msg.hasPermission) {
+            messageClasses += ' no-permission-message';
+        }
+        
+        messageDiv.className = messageClasses;
         messageDiv.dataset.messageId = msg.id;
         
         const userStyle = msg.color ? `style="color: ${msg.color};"` : '';
@@ -965,12 +1160,28 @@ function displayChatMessages(messages) {
         
         const safeUser = msg.user || 'Unknown';
         const safeMessage = msg.message || '[No message]';
+        
+        // Add moderation indicators
+        let moderationIndicators = '';
+        if (msg.isBanned) {
+            moderationIndicators += '<span class="moderation-tag banned-tag" title="This user is banned - auto TTS disabled">🚫 BANNED</span>';
+        }
+        if (!msg.hasPermission) {
+            moderationIndicators += `<span class="moderation-tag permission-tag" title="User lacks required permissions">🔒 NO PERM</span>`;
+        }
+        
         const ttsDirective = getTTSDirective(msg);
-        const playedIndicator = !ttsDirective.eligible
+        
+        // Determine if message is eligible for auto TTS (respects ban and permission status)
+        const autoTtsEligible = ttsDirective.eligible && (msg.autoTtsEligible !== false);
+        
+        const playedIndicator = !autoTtsEligible
             ? '⏭'
             : (msg.played ? '🔇' : (msg.manualQueued ? '⏸' : '🔊'));
-        const indicatorTitle = !ttsDirective.eligible
-            ? 'Ignored for auto TTS (trigger mode does not allow this message)'
+        const indicatorTitle = !autoTtsEligible
+            ? (msg.isBanned ? 'Banned user - auto TTS disabled (click for manual playback)' : 
+               !msg.hasPermission ? 'User lacks permissions - auto TTS disabled (click for manual playback)' :
+               'Ignored for auto TTS (trigger mode does not allow this message)')
             : (msg.played
                 ? 'Already played (click to replay)'
                 : (msg.manualQueued ? 'Queued for manual playback' : 'Not yet played'));
@@ -978,6 +1189,7 @@ function displayChatMessages(messages) {
         messageDiv.innerHTML = `
             <span class="chat-user" ${userStyle}>${escapeHtml(safeUser)}</span>
             ${badges}
+            ${moderationIndicators}
             <span class="chat-text">${escapeHtml(safeMessage)}</span>
             <span class="play-indicator" title="${indicatorTitle}">${playedIndicator}</span>
             <span class="chat-timestamp">${formattedTime}</span>
@@ -1024,10 +1236,10 @@ function displayChatMessages(messages) {
         chatContainer.appendChild(messageDiv);
         debugLog(`📋 Message ${index + 1} added to container`);
         
-        // Add TTS for ONLY truly NEW messages (never seen before)
+        // Add TTS for ONLY truly NEW messages (never seen before) AND respect auto TTS eligibility
         if (safeMessage && safeMessage !== '[No message]') {
             const isNewMessage = newMessages.some(newMsg => newMsg.id === msg.id);
-            if (isNewMessage && !msg.played && ttsDirective.eligible) {
+            if (isNewMessage && !msg.played && autoTtsEligible) {
                 if (shouldAutoplayMessage(msg)) {
                     setTimeout(() => {
                         debugLog(`🔊 AUTO-PLAYING NEW message: ${safeUser}: ${ttsDirective.text.substring(0, 30)}...`);
@@ -1170,11 +1382,11 @@ function startChatPolling() {
     // Initial fetch
     getLiveChatMessages();
     
-    // Set up polling interval
+    // Set up polling interval  
     pollingInterval = setInterval(() => {
         debugLog('📡 Polling for new messages...');
         getLiveChatMessages();
-    }, 2000); // 2 second intervals for faster real-time updates
+    }, 15000); // 15 second intervals for better performance
     
     updateUI();
 }
@@ -1308,6 +1520,55 @@ function setupEventListeners() {
         debugToggleBtn.addEventListener('click', toggleDebugMode);
     }
     
+    // Moderation event listeners
+    if (enableBanListCheckbox) {
+        enableBanListCheckbox.addEventListener('change', function() {
+            moderationSettings.enableBanList = this.checked;
+        });
+    }
+    
+    if (enablePermissionFilterCheckbox) {
+        enablePermissionFilterCheckbox.addEventListener('change', function() {
+            moderationSettings.enablePermissionFilter = this.checked;
+        });
+    }
+    
+    if (permissionModeSelect) {
+        permissionModeSelect.addEventListener('change', function() {
+            moderationSettings.permissionMode = this.value;
+        });
+    }
+    
+    if (addBanBtn) {
+        addBanBtn.addEventListener('click', function() {
+            const username = banUsernameInput?.value?.trim();
+            if (username) {
+                banUser(username);
+                banUsernameInput.value = '';
+            }
+        });
+    }
+    
+    if (banUsernameInput) {
+        banUsernameInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                const username = this.value.trim();
+                if (username) {
+                    banUser(username);
+                    this.value = '';
+                }
+            }
+        });
+    }
+    
+    if (saveModerationSettingsBtn) {
+        saveModerationSettingsBtn.addEventListener('click', saveModerationSettings);
+    }
+    
+    if (loadModerationSettingsBtn) {
+        loadModerationSettingsBtn.addEventListener('click', loadModerationSettings);
+    }
+    
     // Setup TTS controls
     setupTTSControls();
     
@@ -1347,6 +1608,7 @@ document.addEventListener('DOMContentLoaded', function() {
     updateTriggerModeDescription();
     updateMessageStats();
     loadTtsSettings();
+    loadModerationSettings();
     
     // Set default channel if available
     if (channelInput && channelInput.value) {

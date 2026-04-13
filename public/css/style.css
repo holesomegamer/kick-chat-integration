@@ -278,6 +278,37 @@ header h1 {
     background: #fff5f5;
 }
 
+.chat-message.banned-message {
+    border-left-color: #dc3545;
+    background: #fff1f1;
+    opacity: 0.8;
+}
+
+.chat-message.no-permission-message {
+    border-left-color: #ffc107;
+    background: #fffbec;
+    opacity: 0.85;
+}
+
+.moderation-tag {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: bold;
+    margin-right: 6px;
+}
+
+.moderation-tag.banned-tag {
+    background: #dc3545;
+    color: white;
+}
+
+.moderation-tag.permission-tag {
+    background: #ffc107;
+    color: #212529;
+}
+
 .chat-user {
     font-weight: bold;
     color: #007bff;
@@ -382,6 +413,78 @@ header h1 {
     padding: 10px;
     border-radius: 6px;
     font-weight: 600;
+}
+
+/* Moderation Controls */
+.moderation-controls {
+    background: #f8f9fd;
+    border: 1px solid #e6e9f3;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 25px;
+}
+
+.moderation-controls h3 {
+    color: #495057;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+}
+
+.moderation-controls h4 {
+    color: #6c757d;
+    margin: 15px 0 10px 0;
+    font-size: 1rem;
+}
+
+.ban-list-management {
+    margin-top: 15px;
+}
+
+.ban-list {
+    max-height: 150px;
+    overflow-y: auto;
+    padding: 10px;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background: white;
+    margin-top: 10px;
+}
+
+.ban-list-empty {
+    color: #6c757d;
+    font-style: italic;
+    text-align: center;
+    margin: 0;
+}
+
+.banned-user {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    margin: 5px 0;
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 4px;
+}
+
+.banned-user .username {
+    font-weight: bold;
+    color: #856404;
+}
+
+.banned-user .unban-btn {
+    background: #dc3545;
+    border: none;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+
+.banned-user .unban-btn:hover {
+    background: #c82333;
 }
 
 /* Chat Section */
