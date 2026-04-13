@@ -7,6 +7,7 @@ This is a local-only FastAPI stub that matches the provider contract used by the
 - `POST /clone`: stores uploaded samples and returns `voice_id`
 - `POST /synthesize`: returns generated WAV audio bytes (stub tone)
 - `GET /health`: simple health check
+- `POST /warmup`: loads the Chatterbox model immediately so first chat playback has no cold-start wait
 
 The generated audio is a deterministic synthetic tone per voice ID. It is not real speech synthesis, but it is useful to validate the full local pipeline end-to-end.
 

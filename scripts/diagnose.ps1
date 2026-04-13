@@ -37,9 +37,9 @@ else {
     Write-Host "local-tts venv311: MISSING"
 }
 
-Write-Host "[5] Main app health (3001)"
+Write-Host "[5] Main app health (3000)"
 try {
-    (Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:3001/api/voices" -TimeoutSec 5).StatusCode
+    (Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:3000/api/voices" -TimeoutSec 5).StatusCode
 }
 catch {
     Write-Host "unreachable"

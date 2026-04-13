@@ -25,10 +25,16 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIO(server);
 
+function captureRawBody(req, res, buf) {
+    if (buf && buf.length > 0) {
+        req.rawBody = buf.toString('utf8');
+    }
+}
+
 // Middleware
 app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json({ verify: captureRawBody }));
+app.use(bodyParser.urlencoded({ extended: true, verify: captureRawBody }));
 app.use(express.static('public'));
 app.use(session({
     secret: process.env.SESSION_SECRET || 'kick-chat-secret-key',
@@ -77,6 +83,600 @@ let chatMonitoring = false;
 let currentChannel = '';
 let connectedClients = [];
 let chatHistory = [];
+const CHAT_ROUTE_DEBUG_LOGS = process.env.CHAT_DEBUG_LOGS === '1';
+const CHAT_CACHE_TTL_MS = 10 * 60 * 1000;
+const CHANNEL_POINT_EVENT_RETENTION_MS = 60 * 60 * 1000;
+const KICK_API_BASE_URL = 'https://api.kick.com';
+const KICK_PUBLIC_KEY_URL = `${KICK_API_BASE_URL}/public/v1/public-key`;
+const KICK_REDEMPTION_EVENT_NAME = 'channel.reward.redemption.updated';
+const KICK_REDEMPTION_EVENT_VERSION = 1;
+const KICK_WEBHOOK_PATH = '/api/kick/webhooks';
+const KICK_POLLABLE_REDEMPTION_STATUSES = ['pending', 'accepted'];
+const chatProbeCache = new Map();
+const processedRedemptionIds = new Map();
+
+let kickPublicKeyCache = {
+    value: null,
+    fetchedAt: 0
+};
+
+let channelPointEvents = [];
+
+let ttsTriggerSettings = {
+    mode: 'chat_commands',
+    channelPointsRewardTitle: 'Test-tts',
+    lastWebhookReceivedAt: null,
+    lastWebhookEventType: null,
+    lastWebhookError: null,
+    lastAcceptedRedemptionAt: null,
+    lastAcceptedRedemption: null,
+    subscriptionStatus: 'not_attempted',
+    subscriptionId: null,
+    subscriptionError: null,
+    subscriptionUpdatedAt: null
+};
+
+function normalizeComparableText(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function toTimestampMs(value) {
+    if (value === null || value === undefined) {
+        return null;
+    }
+
+    if (typeof value === 'number') {
+        if (!Number.isFinite(value)) {
+            return null;
+        }
+        return value < 1e12 ? value * 1000 : value;
+    }
+
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return null;
+        }
+
+        if (/^\d+(\.\d+)?$/.test(trimmed)) {
+            const numeric = Number(trimmed);
+            if (!Number.isFinite(numeric)) {
+                return null;
+            }
+            return numeric < 1e12 ? numeric * 1000 : numeric;
+        }
+
+        const parsed = Date.parse(trimmed);
+        return Number.isNaN(parsed) ? null : parsed;
+    }
+
+    return null;
+}
+
+function pruneProcessedRedemptions() {
+    const cutoff = Date.now() - CHANNEL_POINT_EVENT_RETENTION_MS;
+    for (const [redemptionId, timestampMs] of processedRedemptionIds.entries()) {
+        if (timestampMs < cutoff) {
+            processedRedemptionIds.delete(redemptionId);
+        }
+    }
+}
+
+function pruneChannelPointEvents() {
+    const cutoff = Date.now() - CHANNEL_POINT_EVENT_RETENTION_MS;
+    channelPointEvents = channelPointEvents
+        .filter((event) => {
+            const eventTimestampMs = toTimestampMs(event.timestamp);
+            return eventTimestampMs === null || eventTimestampMs >= cutoff;
+        })
+        .slice(0, 200);
+}
+
+function buildTtsSettingsResponse(req) {
+    const publicBaseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+
+    return {
+        mode: ttsTriggerSettings.mode,
+        channelPointsRewardTitle: ttsTriggerSettings.channelPointsRewardTitle,
+        webhookPath: KICK_WEBHOOK_PATH,
+        webhookUrl: `${publicBaseUrl}${KICK_WEBHOOK_PATH}`,
+        subscriptionStatus: ttsTriggerSettings.subscriptionStatus,
+        subscriptionId: ttsTriggerSettings.subscriptionId,
+        subscriptionError: ttsTriggerSettings.subscriptionError,
+        subscriptionUpdatedAt: ttsTriggerSettings.subscriptionUpdatedAt,
+        lastWebhookReceivedAt: ttsTriggerSettings.lastWebhookReceivedAt,
+        lastWebhookEventType: ttsTriggerSettings.lastWebhookEventType,
+        lastWebhookError: ttsTriggerSettings.lastWebhookError,
+        lastAcceptedRedemptionAt: ttsTriggerSettings.lastAcceptedRedemptionAt,
+        lastAcceptedRedemption: ttsTriggerSettings.lastAcceptedRedemption,
+        signatureVerificationDisabled: process.env.KICK_SKIP_WEBHOOK_SIGNATURE === '1'
+    };
+}
+
+function formatKickApiError(error, fallbackMessage) {
+    const responseData = error?.response?.data;
+
+    if (typeof responseData === 'string' && responseData.trim()) {
+        return responseData;
+    }
+
+    if (responseData?.message) {
+        return responseData.message;
+    }
+
+    if (Array.isArray(responseData?.data) && responseData.data.length > 0) {
+        const first = responseData.data[0];
+        if (typeof first?.error === 'string' && first.error.trim()) {
+            return first.error;
+        }
+        if (typeof first?.message === 'string' && first.message.trim()) {
+            return first.message;
+        }
+    }
+
+    return error?.message || fallbackMessage;
+}
+
+async function getKickPublicKey() {
+    const cacheTtlMs = 60 * 60 * 1000;
+    if (kickPublicKeyCache.value && Date.now() - kickPublicKeyCache.fetchedAt < cacheTtlMs) {
+        return kickPublicKeyCache.value;
+    }
+
+    const response = await axios.get(KICK_PUBLIC_KEY_URL, { timeout: 5000 });
+    const publicKey = response.data?.data?.public_key;
+
+    if (!publicKey) {
+        throw new Error('Kick public key response did not include a public key');
+    }
+
+    kickPublicKeyCache = {
+        value: publicKey,
+        fetchedAt: Date.now()
+    };
+
+    return publicKey;
+}
+
+async function verifyKickWebhookSignature(req) {
+    if (process.env.KICK_SKIP_WEBHOOK_SIGNATURE === '1') {
+        return true;
+    }
+
+    const signature = req.get('Kick-Event-Signature');
+    const messageId = req.get('Kick-Event-Message-Id');
+    const messageTimestamp = req.get('Kick-Event-Message-Timestamp');
+
+    if (!signature || !messageId || !messageTimestamp) {
+        return false;
+    }
+
+    const publicKey = await getKickPublicKey();
+    const payload = `${messageId}.${messageTimestamp}.${req.rawBody || ''}`;
+    const verifier = crypto.createVerify('RSA-SHA256');
+    verifier.update(payload);
+    verifier.end();
+
+    return verifier.verify(publicKey, signature, 'base64');
+}
+
+function buildChannelPointEventMessage(redemptionPayload) {
+    const rewardTitle = String(redemptionPayload.reward?.title || '').trim();
+    const userInput = String(redemptionPayload.user_input || '').trim();
+    const redeemerName = redemptionPayload.redeemer?.username || 'Unknown';
+    const broadcasterChannel = String(redemptionPayload.broadcaster?.channel_slug || '').trim().toLowerCase();
+
+    return {
+        id: `reward:${redemptionPayload.id}`,
+        user: redeemerName,
+        message: userInput,
+        timestamp: redemptionPayload.redeemed_at || new Date().toISOString(),
+        badges: [
+            { type: 'reward', text: 'Reward' },
+            { type: 'reward-title', text: rewardTitle || 'Channel Points' }
+        ],
+        color: null,
+        type: 'channel_point_redemption',
+        played: false,
+        ttsEligible: true,
+        ttsText: userInput,
+        ttsVoice: 'default',
+        rewardTitle,
+        broadcasterChannel,
+        redemptionStatus: redemptionPayload.status,
+        raw: redemptionPayload
+    };
+}
+
+function flattenRedemptionGroups(payload) {
+    const groups = Array.isArray(payload?.data) ? payload.data : [];
+    const flattened = [];
+
+    groups.forEach((group) => {
+        const reward = group?.reward || null;
+        const redemptions = Array.isArray(group?.redemptions) ? group.redemptions : [];
+        redemptions.forEach((redemption) => {
+            flattened.push({
+                ...redemption,
+                reward: redemption.reward || reward
+            });
+        });
+    });
+
+    return flattened;
+}
+
+function queueChannelPointRedemption(redemptionPayload) {
+    const redemptionId = String(redemptionPayload?.id || '').trim();
+    const rewardTitle = String(redemptionPayload?.reward?.title || '').trim();
+    const userInput = String(redemptionPayload?.user_input || '').trim();
+    const status = normalizeComparableText(redemptionPayload?.status || 'accepted');
+    const expectedRewardTitle = normalizeComparableText(ttsTriggerSettings.channelPointsRewardTitle);
+
+    ttsTriggerSettings.lastWebhookReceivedAt = new Date().toISOString();
+    ttsTriggerSettings.lastWebhookEventType = KICK_REDEMPTION_EVENT_NAME;
+
+    if (!redemptionId || !userInput) {
+        return { accepted: false, reason: 'missing_redemption_fields' };
+    }
+
+    if (status === 'rejected') {
+        return { accepted: false, reason: 'redemption_rejected' };
+    }
+
+    if (expectedRewardTitle && normalizeComparableText(rewardTitle) !== expectedRewardTitle) {
+        return { accepted: false, reason: 'reward_title_mismatch' };
+    }
+
+    pruneProcessedRedemptions();
+    if (processedRedemptionIds.has(redemptionId)) {
+        return { accepted: false, reason: 'duplicate_redemption' };
+    }
+
+    const channelPointMessage = buildChannelPointEventMessage(redemptionPayload);
+    processedRedemptionIds.set(redemptionId, Date.now());
+    channelPointEvents = channelPointEvents.filter((entry) => entry.id !== channelPointMessage.id);
+    channelPointEvents.unshift(channelPointMessage);
+    pruneChannelPointEvents();
+
+    ttsTriggerSettings.lastAcceptedRedemptionAt = channelPointMessage.timestamp;
+    ttsTriggerSettings.lastAcceptedRedemption = {
+        id: redemptionId,
+        rewardTitle: rewardTitle || null,
+        user: channelPointMessage.user,
+        text: userInput,
+        status: redemptionPayload.status || 'accepted'
+    };
+    ttsTriggerSettings.lastWebhookError = null;
+
+    io.emit('channel-point-redemption', channelPointMessage);
+
+    return { accepted: true, message: channelPointMessage };
+}
+
+function getQueuedChannelPointEventsSince(sinceTimestamp) {
+    const sinceMs = toTimestampMs(sinceTimestamp);
+    if (sinceMs === null) {
+        return [...channelPointEvents];
+    }
+
+    const graceMs = 5000;
+    return channelPointEvents.filter((event) => {
+        const eventTimestampMs = toTimestampMs(event.timestamp);
+        if (eventTimestampMs === null) {
+            return true;
+        }
+        return eventTimestampMs > (sinceMs - graceMs);
+    });
+}
+
+async function getExistingRewardRedemptionSubscription(accessToken) {
+    const response = await axios.get(`${KICK_API_BASE_URL}/public/v1/events/subscriptions`, {
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/json'
+        },
+        timeout: 8000
+    });
+
+    const subscriptions = Array.isArray(response.data?.data) ? response.data.data : [];
+    return subscriptions.find((subscription) => {
+        return subscription.event === KICK_REDEMPTION_EVENT_NAME
+            && Number(subscription.version) === KICK_REDEMPTION_EVENT_VERSION
+            && subscription.method === 'webhook';
+    }) || null;
+}
+
+async function ensureRewardRedemptionSubscription(accessToken) {
+    const existingSubscription = await getExistingRewardRedemptionSubscription(accessToken);
+    if (existingSubscription) {
+        ttsTriggerSettings.subscriptionStatus = 'active';
+        ttsTriggerSettings.subscriptionId = existingSubscription.id;
+        ttsTriggerSettings.subscriptionError = null;
+        ttsTriggerSettings.subscriptionUpdatedAt = new Date().toISOString();
+        return {
+            created: false,
+            subscription: existingSubscription
+        };
+    }
+
+    const response = await axios.post(`${KICK_API_BASE_URL}/public/v1/events/subscriptions`, {
+        method: 'webhook',
+        events: [
+            {
+                name: KICK_REDEMPTION_EVENT_NAME,
+                version: KICK_REDEMPTION_EVENT_VERSION
+            }
+        ]
+    }, {
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+        },
+        timeout: 8000
+    });
+
+    const createdSubscription = Array.isArray(response.data?.data)
+        ? response.data.data[0]
+        : null;
+
+    ttsTriggerSettings.subscriptionStatus = createdSubscription?.error ? 'error' : 'active';
+    ttsTriggerSettings.subscriptionId = createdSubscription?.subscription_id || null;
+    ttsTriggerSettings.subscriptionError = createdSubscription?.error || null;
+    ttsTriggerSettings.subscriptionUpdatedAt = new Date().toISOString();
+
+    return {
+        created: true,
+        subscription: createdSubscription
+    };
+}
+
+async function acceptPendingRewardRedemptions(accessToken, redemptionIds) {
+    if (!Array.isArray(redemptionIds) || redemptionIds.length === 0) {
+        return;
+    }
+
+    try {
+        await axios.post(`${KICK_API_BASE_URL}/public/v1/channels/rewards/redemptions/accept`, {
+            ids: redemptionIds.slice(0, 25)
+        }, {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: 'application/json',
+                'Content-Type': 'application/json'
+            },
+            timeout: 8000
+        });
+    } catch (error) {
+        console.warn('⚠️ Failed to auto-accept reward redemptions:', error.response?.data || error.message);
+    }
+}
+
+async function pollChannelPointRedemptions(accessToken) {
+    if (ttsTriggerSettings.mode === 'chat_commands') {
+        return [];
+    }
+
+    if (ttsTriggerSettings.subscriptionStatus !== 'active' && ttsTriggerSettings.subscriptionStatus !== 'scope_required') {
+        ttsTriggerSettings.subscriptionStatus = 'polling_local';
+        ttsTriggerSettings.subscriptionError = null;
+        ttsTriggerSettings.subscriptionUpdatedAt = new Date().toISOString();
+    }
+
+    const flattenedRedemptions = [];
+
+    for (const status of KICK_POLLABLE_REDEMPTION_STATUSES) {
+        try {
+            const response = await axios.get(`${KICK_API_BASE_URL}/public/v1/channels/rewards/redemptions`, {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    Accept: 'application/json'
+                },
+                params: {
+                    status
+                },
+                timeout: 8000
+            });
+
+            flattenedRedemptions.push(...flattenRedemptionGroups(response.data));
+        } catch (error) {
+            const message = error.response?.data?.message || error.message;
+            console.warn(`⚠️ Reward redemption poll failed for status=${status}:`, message);
+
+            if (error.response?.status === 403) {
+                ttsTriggerSettings.subscriptionError = 'Missing channel rewards scope. Log out and log in again to grant channel point access.';
+                ttsTriggerSettings.subscriptionStatus = 'scope_required';
+                ttsTriggerSettings.subscriptionUpdatedAt = new Date().toISOString();
+                break;
+            }
+        }
+    }
+
+    if (flattenedRedemptions.length === 0) {
+        return [];
+    }
+
+    flattenedRedemptions.sort((left, right) => {
+        const rightMs = toTimestampMs(right.redeemed_at) || 0;
+        const leftMs = toTimestampMs(left.redeemed_at) || 0;
+        return rightMs - leftMs;
+    });
+
+    const acceptedPendingIds = [];
+    const queuedMessages = [];
+
+    for (const redemption of flattenedRedemptions) {
+        const result = queueChannelPointRedemption(redemption);
+        if (result.accepted && result.message) {
+            queuedMessages.push(result.message);
+            if (normalizeComparableText(redemption.status) === 'pending') {
+                acceptedPendingIds.push(String(redemption.id));
+            }
+        }
+    }
+
+    if (acceptedPendingIds.length > 0) {
+        await acceptPendingRewardRedemptions(accessToken, acceptedPendingIds);
+    }
+
+    return queuedMessages;
+}
+
+async function resolveChannelMetadata(channelName, accessToken) {
+    const normalizedChannelName = normalizeComparableText(channelName);
+    const cachedEntry = getValidCacheEntry(normalizedChannelName);
+    const browserHeaders = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': `https://kick.com/${normalizedChannelName}`
+    };
+
+    const metadata = {
+        channelName: normalizedChannelName,
+        channelId: cachedEntry?.channelId || null,
+        broadcasterUserId: cachedEntry?.broadcasterUserId || null,
+        browserHeaders
+    };
+
+    try {
+        const channelsResponse = await axios.get(`${KICK_API_BASE_URL}/public/v1/channels`, {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: 'application/json'
+            },
+            params: {
+                slug: normalizedChannelName
+            },
+            timeout: 6000
+        });
+
+        const channelRecord = Array.isArray(channelsResponse.data?.data)
+            ? channelsResponse.data.data[0]
+            : null;
+
+        if (channelRecord?.broadcaster_user_id) {
+            metadata.broadcasterUserId = String(channelRecord.broadcaster_user_id);
+        }
+
+        if (channelRecord?.id) {
+            metadata.channelId = String(channelRecord.id);
+        }
+    } catch (_error) {
+        // Keep going with internal endpoint fallbacks below.
+    }
+
+    if (!metadata.channelId && metadata.broadcasterUserId) {
+        try {
+            const livestreamResponse = await axios.get(`${KICK_API_BASE_URL}/public/v1/livestreams`, {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    Accept: 'application/json'
+                },
+                params: {
+                    broadcaster_user_id: metadata.broadcasterUserId,
+                    limit: 1
+                },
+                timeout: 6000
+            });
+
+            const livestreamRecord = Array.isArray(livestreamResponse.data?.data)
+                ? livestreamResponse.data.data[0]
+                : null;
+
+            if (livestreamRecord?.channel_id) {
+                metadata.channelId = String(livestreamRecord.channel_id);
+            }
+        } catch (_error) {
+            // Keep going with internal endpoint fallbacks below.
+        }
+    }
+
+    if (!metadata.channelId) {
+        const channelInfoEndpoints = [
+            `https://kick.com/api/v2/channels/${normalizedChannelName}`,
+            `https://kick.com/api/v1/channels/${normalizedChannelName}`
+        ];
+
+        for (const infoUrl of channelInfoEndpoints) {
+            try {
+                const infoResponse = await axios.get(infoUrl, {
+                    headers: browserHeaders,
+                    timeout: 6000,
+                    validateStatus: () => true
+                });
+
+                if (infoResponse.status !== 200 || !infoResponse.data) {
+                    continue;
+                }
+
+                const payload = infoResponse.data;
+                const resolvedChannelId =
+                    payload.id ||
+                    payload.channel?.id ||
+                    payload.chatroom?.id ||
+                    payload.data?.id ||
+                    payload.data?.channel?.id ||
+                    payload.data?.chatroom?.id;
+                const resolvedBroadcasterId =
+                    payload.broadcaster_user_id ||
+                    payload.user_id ||
+                    payload.channel?.broadcaster_user_id ||
+                    payload.data?.broadcaster_user_id ||
+                    payload.data?.channel?.broadcaster_user_id;
+
+                if (resolvedChannelId && !metadata.channelId) {
+                    metadata.channelId = String(resolvedChannelId);
+                }
+
+                if (resolvedBroadcasterId && !metadata.broadcasterUserId) {
+                    metadata.broadcasterUserId = String(resolvedBroadcasterId);
+                }
+
+                if (metadata.channelId || metadata.broadcasterUserId) {
+                    break;
+                }
+            } catch (_error) {
+                // Continue to next resolver endpoint.
+            }
+        }
+    }
+
+    if (metadata.channelId || metadata.broadcasterUserId) {
+        updateChatProbeCache(normalizedChannelName, {
+            channelId: metadata.channelId,
+            broadcasterUserId: metadata.broadcasterUserId,
+            preferredEndpointName: cachedEntry?.preferredEndpointName || null
+        });
+    }
+
+    return metadata;
+}
+
+function getValidCacheEntry(channelName) {
+    const entry = chatProbeCache.get(channelName);
+    if (!entry) {
+        return null;
+    }
+
+    if (Date.now() - entry.updatedAt > CHAT_CACHE_TTL_MS) {
+        chatProbeCache.delete(channelName);
+        return null;
+    }
+
+    return entry;
+}
+
+function updateChatProbeCache(channelName, patch) {
+    const existing = chatProbeCache.get(channelName) || {};
+    chatProbeCache.set(channelName, {
+        ...existing,
+        ...patch,
+        updatedAt: Date.now()
+    });
+}
 
 // Kick.com OAuth configuration
 const KICK_CLIENT_ID = process.env.KICK_CLIENT_ID;
@@ -109,7 +709,7 @@ app.get('/auth/kick', (req, res) => {
         response_type: 'code',
         client_id: KICK_CLIENT_ID,
         redirect_uri: REDIRECT_URI,
-        scope: 'user:read channels:read events:subscribe webhooks:manage chat:read',
+        scope: 'user:read channels:read channel:rewards:read channel:rewards:write events:subscribe webhooks:manage chat:read',
         state: state,
         code_challenge: codeChallenge,
         code_challenge_method: 'S256'
@@ -133,7 +733,7 @@ app.get('/auth/popup', (req, res) => {
         response_type: 'code',
         client_id: KICK_CLIENT_ID,
         redirect_uri: REDIRECT_URI,
-        scope: 'user:read channels:read events:subscribe webhooks:manage chat:read',
+        scope: 'user:read channels:read channel:rewards:read channel:rewards:write events:subscribe webhooks:manage chat:read',
         state: state,
         code_challenge: codeChallenge,
         code_challenge_method: 'S256'
@@ -294,8 +894,104 @@ app.get('/status', (req, res) => {
         success: true,
         status: 'online',
         server_time: new Date().toISOString(),
-        polling_active: true
+        polling_active: true,
+        tts_trigger: {
+            mode: ttsTriggerSettings.mode,
+            reward_title: ttsTriggerSettings.channelPointsRewardTitle,
+            last_redemption_at: ttsTriggerSettings.lastAcceptedRedemptionAt,
+            subscription_status: ttsTriggerSettings.subscriptionStatus
+        }
     });
+});
+
+app.get('/api/tts/settings', (req, res) => {
+    res.json({
+        success: true,
+        settings: buildTtsSettingsResponse(req)
+    });
+});
+
+app.post('/api/tts/settings', (req, res) => {
+    const validModes = new Set(['chat_commands', 'channel_points', 'both']);
+    const requestedMode = String(req.body?.mode || '').trim().toLowerCase();
+    const requestedRewardTitle = String(req.body?.channelPointsRewardTitle || '').trim();
+
+    if (!validModes.has(requestedMode)) {
+        return res.status(400).json({
+            success: false,
+            error: 'mode must be one of: chat_commands, channel_points, both'
+        });
+    }
+
+    ttsTriggerSettings.mode = requestedMode;
+    ttsTriggerSettings.channelPointsRewardTitle = requestedRewardTitle || 'Test-tts';
+
+    res.json({
+        success: true,
+        settings: buildTtsSettingsResponse(req)
+    });
+});
+
+app.post('/api/kick/channel-point-subscription', async (req, res) => {
+    const accessToken = req.session.accessToken;
+    if (!accessToken) {
+        return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+
+    try {
+        const result = await ensureRewardRedemptionSubscription(accessToken);
+        res.json({
+            success: true,
+            created: result.created,
+            subscription: result.subscription,
+            settings: buildTtsSettingsResponse(req)
+        });
+    } catch (error) {
+        let message = formatKickApiError(error, 'Failed to subscribe to channel point redemptions');
+        if (/bad request/i.test(message)) {
+            message = 'Bad request from Kick when subscribing webhook events (often means webhook URL is not configured publicly in Kick app settings). Local polling mode can still work without this.';
+        }
+        ttsTriggerSettings.subscriptionStatus = 'error';
+        ttsTriggerSettings.subscriptionError = message;
+        ttsTriggerSettings.subscriptionUpdatedAt = new Date().toISOString();
+
+        res.status(500).json({
+            success: false,
+            error: message,
+            settings: buildTtsSettingsResponse(req)
+        });
+    }
+});
+
+app.post(KICK_WEBHOOK_PATH, async (req, res) => {
+    try {
+        const signatureValid = await verifyKickWebhookSignature(req);
+        if (!signatureValid) {
+            ttsTriggerSettings.lastWebhookReceivedAt = new Date().toISOString();
+            ttsTriggerSettings.lastWebhookError = 'Invalid or missing Kick webhook signature';
+            return res.status(401).json({ success: false, error: 'Invalid webhook signature' });
+        }
+
+        const eventType = req.get('Kick-Event-Type') || 'unknown';
+        ttsTriggerSettings.lastWebhookReceivedAt = new Date().toISOString();
+        ttsTriggerSettings.lastWebhookEventType = eventType;
+
+        if (eventType !== KICK_REDEMPTION_EVENT_NAME) {
+            return res.status(202).json({ success: true, ignored: true, eventType });
+        }
+
+        const result = queueChannelPointRedemption(req.body || {});
+        res.json({
+            success: true,
+            processed: result.accepted,
+            reason: result.reason || null
+        });
+    } catch (error) {
+        ttsTriggerSettings.lastWebhookReceivedAt = new Date().toISOString();
+        ttsTriggerSettings.lastWebhookError = error.message;
+        console.error('Kick webhook processing error:', error.message);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 // Voice Library Routes
@@ -558,13 +1254,19 @@ app.post('/api/tts/custom', async (req, res) => {
     }
 });
 
-// Get live chat messages using polling approach with confirmed Channel ID
+// Get live chat messages using polling approach
 app.post('/api/get-live-chat-messages', async (req, res) => {
     console.log('💬 Live chat messages requested');
     
     try {
         const { channel_name, since_timestamp } = req.body;
         const access_token = req.session.accessToken;
+        const channelName = String(channel_name || '').trim().toLowerCase();
+        const cacheEntry = getValidCacheEntry(channelName);
+
+        if (!channelName) {
+            return res.status(400).json({ success: false, error: 'channel_name is required' });
+        }
         
         if (!access_token) {
             return res.status(401).json({ error: 'Not authenticated' });
@@ -575,36 +1277,24 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
             console.log('📅 Filtering messages since:', since_timestamp);
         }
         
-        const browserHeaders = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Authorization': `Bearer ${access_token}`,
-            'Accept': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Referer': `https://kick.com/${channel_name}`
-        };
-        
-        // Use confirmed Channel ID: 1580195
-        const channelId = '1580195';
-        
-        // Also try with the actual channel name for some endpoints
-        const channelName = channel_name;
-        
+        const metadata = await resolveChannelMetadata(channelName, access_token);
+        const browserHeaders = metadata.browserHeaders;
+        const channelId = metadata.channelId;
+
+        if (channelId) {
+            if (!cacheEntry?.channelId || cacheEntry.channelId !== channelId) {
+                console.log(`🧭 Resolved channel "${channelName}" to id ${channelId}`);
+            }
+        } else {
+            console.log(`⚠️ Could not resolve channel id for "${channelName}". Using name-based endpoints only.`);
+        }
+
         // Try multiple chat message endpoints
         const chatEndpoints = [
-            {
-                name: 'v2/channels/messages',
-                url: `https://kick.com/api/v2/channels/${channelId}/messages`,
-                description: 'v2 channel messages API (by ID)'
-            },
             {
                 name: 'v2/channels/messages (by name)',
                 url: `https://kick.com/api/v2/channels/${channelName}/messages`,
                 description: 'v2 channel messages API (by name)'
-            },
-            {
-                name: 'v1/channels/messages',  
-                url: `https://kick.com/api/v1/channels/${channelId}/messages`,
-                description: 'v1 channel messages API (by ID)'
             },
             {
                 name: 'v1/channels/messages (by name)',
@@ -612,34 +1302,14 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
                 description: 'v1 channel messages API (by name)'
             },
             {
-                name: 'v2/channels/messages?limit=100',
-                url: `https://kick.com/api/v2/channels/${channelId}/messages?limit=100`,
-                description: 'v2 channel messages with higher limit for real-time'
-            },
-            {
-                name: 'v2/channels/messages/live',
-                url: `https://kick.com/api/v2/channels/${channelId}/messages/live`,
-                description: 'Live messages endpoint attempt'
-            },
-            {
-                name: 'v2/channels/messages?recent=true',
-                url: `https://kick.com/api/v2/channels/${channelId}/messages?recent=true&limit=100`,
-                description: 'Messages with recent flag'
-            },
-            {
-                name: 'v2/channels/messages/recent',
-                url: `https://kick.com/api/v2/channels/${channelId}/messages/recent`,
-                description: 'Recent messages API (by ID)'
+                name: 'v2/channels/messages?limit=100 (by name)',
+                url: `https://kick.com/api/v2/channels/${channelName}/messages?limit=100`,
+                description: 'v2 channel messages with higher limit (by name)'
             },
             {
                 name: 'v2/channels/messages/recent (by name)',
                 url: `https://kick.com/api/v2/channels/${channelName}/messages/recent`,
                 description: 'Recent messages API (by name)'
-            },
-            {
-                name: 'v2/chatrooms/messages',
-                url: `https://kick.com/api/v2/chatrooms/${channelId}/messages`,
-                description: 'v2 chatroom messages API (by ID)'
             },
             {
                 name: 'v2/chatrooms/messages (by name)',
@@ -652,6 +1322,54 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
                 description: 'v1 direct chat messages API'
             }
         ];
+
+        if (channelId) {
+            chatEndpoints.push(
+                {
+                    name: 'v2/channels/messages (by id)',
+                    url: `https://kick.com/api/v2/channels/${channelId}/messages`,
+                    description: 'v2 channel messages API (by ID)'
+                },
+                {
+                    name: 'v1/channels/messages (by id)',
+                    url: `https://kick.com/api/v1/channels/${channelId}/messages`,
+                    description: 'v1 channel messages API (by ID)'
+                },
+                {
+                    name: 'v2/channels/messages?limit=100 (by id)',
+                    url: `https://kick.com/api/v2/channels/${channelId}/messages?limit=100`,
+                    description: 'v2 channel messages with higher limit (by ID)'
+                },
+                {
+                    name: 'v2/channels/messages/live (by id)',
+                    url: `https://kick.com/api/v2/channels/${channelId}/messages/live`,
+                    description: 'Live messages endpoint attempt (by ID)'
+                },
+                {
+                    name: 'v2/channels/messages?recent=true (by id)',
+                    url: `https://kick.com/api/v2/channels/${channelId}/messages?recent=true&limit=100`,
+                    description: 'Messages with recent flag (by ID)'
+                },
+                {
+                    name: 'v2/channels/messages/recent (by id)',
+                    url: `https://kick.com/api/v2/channels/${channelId}/messages/recent`,
+                    description: 'Recent messages API (by ID)'
+                },
+                {
+                    name: 'v2/chatrooms/messages (by id)',
+                    url: `https://kick.com/api/v2/chatrooms/${channelId}/messages`,
+                    description: 'v2 chatroom messages API (by ID)'
+                }
+            );
+        }
+
+        if (cacheEntry?.preferredEndpointName) {
+            const preferredIndex = chatEndpoints.findIndex((endpoint) => endpoint.name === cacheEntry.preferredEndpointName);
+            if (preferredIndex > 0) {
+                const [preferredEndpoint] = chatEndpoints.splice(preferredIndex, 1);
+                chatEndpoints.unshift(preferredEndpoint);
+            }
+        }
         
         const messageResults = [];
         let workingEndpoint = null;
@@ -717,15 +1435,23 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
                                 
                                 // Filter by timestamp if provided (only messages AFTER monitoring started)
                                 if (since_timestamp) {
-                                    const sinceDate = new Date(since_timestamp);
+                                    const sinceMs = toTimestampMs(since_timestamp);
                                     const beforeFilterCount = processedMessages.length;
-                                    
-                                    processedMessages = processedMessages.filter(msg => {
-                                        const msgDate = new Date(msg.timestamp);
-                                        return msgDate > sinceDate; // Only messages AFTER the start time
-                                    });
-                                    
-                                    console.log(`📅 Timestamp filter: ${beforeFilterCount} total → ${processedMessages.length} new messages since ${since_timestamp}`);
+
+                                    if (sinceMs !== null) {
+                                        const graceMs = 5000;
+                                        processedMessages = processedMessages.filter(msg => {
+                                            const msgMs = toTimestampMs(msg.timestamp);
+                                            if (msgMs === null) {
+                                                return true;
+                                            }
+                                            return msgMs > (sinceMs - graceMs);
+                                        });
+
+                                        console.log(`📅 Timestamp filter: ${beforeFilterCount} total → ${processedMessages.length} new messages since ${since_timestamp}`);
+                                    } else {
+                                        console.log(`⚠️ Skipping timestamp filter due to invalid since_timestamp: ${since_timestamp}`);
+                                    }
                                 }
                                 
                                 // Store processed messages for return
@@ -745,10 +1471,14 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
                                 break; // Stop at first working endpoint
                             }
                         } catch (parseError) {
-                            console.log(`   ❌ Failed to parse JSON: ${parseError.message}`);
+                            if (CHAT_ROUTE_DEBUG_LOGS) {
+                                console.log(`   ❌ Failed to parse JSON: ${parseError.message}`);
+                            }
                         }
                     } else {
-                        console.log(`   📄 Non-JSON response (${response.status})`);
+                        if (CHAT_ROUTE_DEBUG_LOGS) {
+                            console.log(`   📄 Non-JSON response (${response.status})`);
+                        }
                     }
                     
                     messageResults.push({
@@ -760,7 +1490,9 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
                         contentPreview: String(response.data).substring(0, 200)
                     });
                 } else {
-                    console.log(`   ❌ Error response: ${response.status}`);
+                    if (CHAT_ROUTE_DEBUG_LOGS) {
+                        console.log(`   ❌ Error response: ${response.status}`);
+                    }
                     messageResults.push({
                         endpoint: endpoint,
                         status: response.status,
@@ -770,7 +1502,9 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
                 }
                 
             } catch (error) {
-                console.log(`   ❌ Error testing ${endpoint.name}: ${error.message}`);
+                if (CHAT_ROUTE_DEBUG_LOGS) {
+                    console.log(`   ❌ Error testing ${endpoint.name}: ${error.message}`);
+                }
                 messageResults.push({
                     endpoint: endpoint,
                     error: error.message,
@@ -779,12 +1513,45 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
             }
         }
         
+        await pollChannelPointRedemptions(access_token);
+
+        const queuedChannelPointMessages = getQueuedChannelPointEventsSince(since_timestamp)
+            .filter((message) => {
+                if (!message.broadcasterChannel) {
+                    return true;
+                }
+
+                return message.broadcasterChannel === channelName;
+            });
+        let combinedMessages = Array.isArray(chatMessages) ? [...chatMessages] : [];
+
+        if (queuedChannelPointMessages.length > 0) {
+            const existingIds = new Set(combinedMessages.map((message) => message.id));
+            queuedChannelPointMessages.forEach((message) => {
+                if (!existingIds.has(message.id)) {
+                    combinedMessages.push(message);
+                }
+            });
+        }
+
+        combinedMessages.sort((left, right) => {
+            const rightMs = toTimestampMs(right.timestamp) || 0;
+            const leftMs = toTimestampMs(left.timestamp) || 0;
+            return rightMs - leftMs;
+        });
+
         const workingEndpoints = messageResults.filter(r => r.working);
-        const totalMessages = messageResults.reduce((sum, r) => sum + (r.messageCount || 0), 0);
+        const totalMessages = combinedMessages.length;
         
         // Simplified logging - only show essential info
         if (workingEndpoints.length > 0) {
             console.log(`✅ Chat fetch successful: ${totalMessages} messages`);
+            if (workingEndpoint?.name) {
+                updateChatProbeCache(channelName, {
+                    channelId: channelId || cacheEntry?.channelId || null,
+                    preferredEndpointName: workingEndpoint.name
+                });
+            }
         } else {
             console.log(`⚠️ No chat messages found`);
         }
@@ -793,25 +1560,33 @@ app.post('/api/get-live-chat-messages', async (req, res) => {
             success: true,
             channel: channel_name,
             channel_id: channelId,
+            tts_trigger: {
+                mode: ttsTriggerSettings.mode,
+                reward_title: ttsTriggerSettings.channelPointsRewardTitle,
+                subscription_status: ttsTriggerSettings.subscriptionStatus,
+                subscription_error: ttsTriggerSettings.subscriptionError,
+                last_redemption_at: ttsTriggerSettings.lastAcceptedRedemptionAt
+            },
             summary: {
                 working_endpoints: workingEndpoints.length,
                 total_messages: totalMessages,
-                best_endpoint: workingEndpoint?.name || null
+                best_endpoint: workingEndpoint?.name || null,
+                queued_channel_point_messages: queuedChannelPointMessages.length
             },
-            messages: chatMessages, // Return ALL processed messages for real-time detection
+            messages: combinedMessages,
             endpoints_tested: messageResults,
             recommendations: workingEndpoint ? 
-                `Use ${workingEndpoint.name} for polling - it returned ${chatMessages.length} messages!` :
+                `Use ${workingEndpoint.name} for polling - it returned ${combinedMessages.length} messages!` :
                 totalMessages > 0 ?
                 'Messages found but in unexpected format - check endpoint data structures.' :
                 'No chat messages found. Channel might be offline or use different API structure.'
         });
         
     } catch (error) {
-        console.error('❌ Live chat message fetch failed:', error.message);
+        console.error('❌ Live chat message fetch failed:', error.response?.data || error.message);
         res.status(400).json({ 
             success: false, 
-            error: error.message 
+            error: error.response?.data?.message || error.message 
         });
     }
 });

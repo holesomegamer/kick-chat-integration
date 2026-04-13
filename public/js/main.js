@@ -31,12 +31,33 @@ let speechSynthesis = window.speechSynthesis;
 let displayedMessageCount = 0;
 let displayedMessages = new Map(); // Track displayed messages by ID
 let activeProviderAudio = null;
+let manualTTSQueue = [];
+let lastSpokenMessage = null;
+let ttsMode = 'autoplay';
+let ttsTriggerMode = 'chat_commands';
+let channelPointsRewardTitle = 'Test-tts';
+let modeSpeedMultipliers = {
+    autoplay: 1,
+    manual: 1,
+    hybrid: 1
+};
 
 const TTS_COMMANDS = new Set(['tts', 'custom1', 'custom2']);
 const TTS_VOICE_PROFILES = {
     default: { pitch: 1.0, rateMultiplier: 1.0 },
     custom1: { pitch: 0.7, rateMultiplier: 0.95 },
     custom2: { pitch: 1.35, rateMultiplier: 1.08 }
+};
+const HYBRID_AUTO_BADGES = new Set(['broadcaster', 'moderator', 'vip', 'staff']);
+const TTS_MODE_DESCRIPTIONS = {
+    autoplay: 'Autoplay mode reads all eligible new messages automatically.',
+    manual: 'Manual mode queues eligible messages and only plays when you trigger playback.',
+    hybrid: 'Hybrid mode autoplays broadcaster/mod/vip messages and queues the rest for manual playback.'
+};
+const TTS_TRIGGER_MODE_DESCRIPTIONS = {
+    chat_commands: 'Chat commands are currently the only accepted trigger.',
+    channel_points: 'Only matching channel point redemptions with text input will trigger TTS.',
+    both: 'Chat commands and matching channel point redemptions will both trigger TTS.'
 };
 
 function hashVoiceTag(tag) {
@@ -107,6 +128,14 @@ function getTTSDirective(msg) {
         };
     }
 
+    if (ttsTriggerMode === 'channel_points') {
+        return {
+            eligible: false,
+            text: '',
+            voice: 'default'
+        };
+    }
+
     const rawText = typeof msg?.message === 'string' ? msg.message.trim() : '';
     const match = rawText.match(/^!(\w+)\s+([\s\S]+)$/i);
     const command = match?.[1]?.toLowerCase();
@@ -125,6 +154,319 @@ function getTTSDirective(msg) {
         text: '',
         voice: 'default'
     };
+}
+
+function normalizeBadgeType(badge) {
+    if (!badge) {
+        return '';
+    }
+
+    if (typeof badge === 'string') {
+        return badge.toLowerCase();
+    }
+
+    if (typeof badge.type === 'string') {
+        return badge.type.toLowerCase();
+    }
+
+    if (typeof badge.name === 'string') {
+        return badge.name.toLowerCase();
+    }
+
+    return '';
+}
+
+function isHybridPriorityMessage(msg) {
+    const badges = Array.isArray(msg?.badges) ? msg.badges : [];
+    return badges.some((badge) => HYBRID_AUTO_BADGES.has(normalizeBadgeType(badge)));
+}
+
+function shouldAutoplayMessage(msg) {
+    if (ttsMode === 'autoplay') {
+        return true;
+    }
+
+    if (ttsMode === 'manual') {
+        return false;
+    }
+
+    return isHybridPriorityMessage(msg);
+}
+
+function getPlaybackSpeedMultiplier(playbackContext = 'auto') {
+    if (playbackContext === 'manual') {
+        return modeSpeedMultipliers.manual;
+    }
+
+    if (playbackContext === 'hybrid') {
+        return modeSpeedMultipliers.hybrid;
+    }
+
+    return modeSpeedMultipliers[ttsMode] || 1;
+}
+
+function isMessageInManualQueue(messageId) {
+    return manualTTSQueue.some((item) => item.id === messageId);
+}
+
+function removeMessageFromManualQueue(messageId) {
+    const before = manualTTSQueue.length;
+    manualTTSQueue = manualTTSQueue.filter((item) => item.id !== messageId);
+    if (manualTTSQueue.length !== before) {
+        updateMessageStats();
+    }
+}
+
+function queueMessageForManualPlayback(message, directive) {
+    if (!message?.id || !directive?.eligible) {
+        return;
+    }
+
+    if (isMessageInManualQueue(message.id)) {
+        return;
+    }
+
+    manualTTSQueue.push({
+        id: message.id,
+        user: message.user || 'Unknown',
+        text: directive.text,
+        voice: directive.voice,
+        timestamp: message.timestamp || new Date().toISOString()
+    });
+    updateMessageStats();
+}
+
+function playQueuedManualMessage(entry) {
+    if (!entry) {
+        return;
+    }
+
+    replayCount++;
+    speakText(entry.text, entry.user, entry.voice, true, null, 'manual');
+    updateMessageStats();
+}
+
+function playNextManualMessage() {
+    if (manualTTSQueue.length === 0) {
+        debugLog('🔊 Manual queue is empty');
+        return;
+    }
+
+    const nextEntry = manualTTSQueue.shift();
+    playQueuedManualMessage(nextEntry);
+}
+
+function skipCurrentPlayback() {
+    if (speechSynthesis) {
+        speechSynthesis.cancel();
+    }
+
+    if (activeProviderAudio) {
+        activeProviderAudio.pause();
+        activeProviderAudio.currentTime = 0;
+        activeProviderAudio = null;
+    }
+
+    isSpeaking = false;
+    processNextInTTSQueue();
+}
+
+function clearPlaybackQueue() {
+    ttsQueue = [];
+    manualTTSQueue = [];
+
+    if (speechSynthesis) {
+        speechSynthesis.cancel();
+    }
+
+    if (activeProviderAudio) {
+        activeProviderAudio.pause();
+        activeProviderAudio.currentTime = 0;
+        activeProviderAudio = null;
+    }
+
+    isSpeaking = false;
+    updateMessageStats();
+}
+
+function replayLastMessage() {
+    if (!lastSpokenMessage) {
+        debugLog('🔊 No previous spoken message to replay');
+        return;
+    }
+
+    replayCount++;
+    speakText(
+        lastSpokenMessage.text,
+        lastSpokenMessage.user,
+        lastSpokenMessage.voice,
+        true,
+        null,
+        'manual'
+    );
+    updateMessageStats();
+}
+
+function updateModeDescription() {
+    const descriptionEl = document.getElementById('ttsModeDescription');
+    if (descriptionEl) {
+        descriptionEl.textContent = TTS_MODE_DESCRIPTIONS[ttsMode] || TTS_MODE_DESCRIPTIONS.autoplay;
+    }
+}
+
+function updateTriggerModeDescription() {
+    const descriptionEl = document.getElementById('ttsTriggerModeDescription');
+    if (descriptionEl) {
+        descriptionEl.textContent = TTS_TRIGGER_MODE_DESCRIPTIONS[ttsTriggerMode] || TTS_TRIGGER_MODE_DESCRIPTIONS.chat_commands;
+    }
+}
+
+function updateChannelPointsStatus(message, isError = false) {
+    const statusEl = document.getElementById('channelPointsStatus');
+    if (!statusEl) {
+        return;
+    }
+
+    statusEl.textContent = message;
+    statusEl.className = isError ? 'tts-mode-description status-error' : 'tts-mode-description';
+}
+
+function applyTtsSettings(settings) {
+    if (!settings) {
+        return;
+    }
+
+    ttsTriggerMode = settings.mode || 'chat_commands';
+    channelPointsRewardTitle = settings.channelPointsRewardTitle || 'Test-tts';
+
+    const triggerModeSelect = document.getElementById('ttsTriggerModeSelect');
+    const rewardTitleInput = document.getElementById('channelPointsRewardTitleInput');
+
+    if (triggerModeSelect) {
+        triggerModeSelect.value = ttsTriggerMode;
+    }
+
+    if (rewardTitleInput) {
+        rewardTitleInput.value = channelPointsRewardTitle;
+    }
+
+    const subscriptionState = settings.subscriptionStatus || 'not_attempted';
+    const webhookLabel = settings.webhookUrl || settings.webhookPath || '/api/kick/webhooks';
+    let statusMessage = `Webhook: ${webhookLabel} | Subscription: ${subscriptionState}`;
+
+    if (settings.lastAcceptedRedemption?.rewardTitle || settings.lastAcceptedRedemption?.user) {
+        const rewardLabel = settings.lastAcceptedRedemption.rewardTitle || channelPointsRewardTitle;
+        const userLabel = settings.lastAcceptedRedemption.user || 'unknown user';
+        statusMessage += ` | Last redemption: ${rewardLabel} by ${userLabel}`;
+    }
+
+    if (settings.subscriptionError) {
+        statusMessage += ` | Error: ${settings.subscriptionError}`;
+    }
+
+    updateChannelPointsStatus(statusMessage, Boolean(settings.subscriptionError || settings.lastWebhookError));
+    updateTriggerModeDescription();
+    updateMessageStats();
+}
+
+async function loadTtsSettings() {
+    try {
+        const response = await fetch('/api/tts/settings');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const payload = await response.json();
+        if (payload.success) {
+            applyTtsSettings(payload.settings);
+        }
+    } catch (error) {
+        console.error('❌ Failed to load TTS settings:', error);
+        updateChannelPointsStatus('Failed to load trigger settings.', true);
+    }
+}
+
+async function saveTtsTriggerSettings() {
+    const triggerModeSelect = document.getElementById('ttsTriggerModeSelect');
+    const rewardTitleInput = document.getElementById('channelPointsRewardTitleInput');
+
+    const payload = {
+        mode: triggerModeSelect?.value || 'chat_commands',
+        channelPointsRewardTitle: rewardTitleInput?.value?.trim() || 'Test-tts'
+    };
+
+    try {
+        const response = await fetch('/api/tts/settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `HTTP ${response.status}`);
+        }
+
+        applyTtsSettings(result.settings);
+        updateChannelPointsStatus(`Saved trigger settings. Reward title: ${result.settings.channelPointsRewardTitle}`);
+    } catch (error) {
+        console.error('❌ Failed to save trigger settings:', error);
+        updateChannelPointsStatus(`Failed to save trigger settings: ${error.message}`, true);
+    }
+}
+
+async function subscribeToChannelPointEvents() {
+    try {
+        updateChannelPointsStatus('Subscribing to reward redemption events...');
+
+        const response = await fetch('/api/kick/channel-point-subscription', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `HTTP ${response.status}`);
+        }
+
+        applyTtsSettings(result.settings);
+        const subscriptionId = result.subscription?.subscription_id || result.subscription?.id || 'created';
+        updateChannelPointsStatus(`Reward redemption subscription ready (${subscriptionId}).`);
+    } catch (error) {
+        console.error('❌ Failed to subscribe to reward redemptions:', error);
+        updateChannelPointsStatus(`Reward redemption subscription failed: ${error.message}`, true);
+    }
+}
+
+function injectRealtimeMessage(message) {
+    if (!isPollingActive || !message || !message.id) {
+        return;
+    }
+
+    if (message.broadcasterChannel && currentChannel && message.broadcasterChannel !== currentChannel.toLowerCase()) {
+        return;
+    }
+
+    const mergedMessages = Array.from(displayedMessages.values());
+    mergedMessages.push(message);
+    mergedMessages.sort((left, right) => {
+        const rightTime = Date.parse(right.timestamp || 0) || 0;
+        const leftTime = Date.parse(left.timestamp || 0) || 0;
+        return rightTime - leftTime;
+    });
+
+    displayChatMessages(mergedMessages);
+}
+
+function updatePlaybackControlState() {
+    const playNextManualBtn = document.getElementById('playNextManualBtn');
+    if (playNextManualBtn) {
+        playNextManualBtn.disabled = manualTTSQueue.length === 0;
+    }
 }
 
 // Toggle debug mode
@@ -236,6 +578,7 @@ function stopTTSImmediately() {
 
     ttsQueue = [];
     isSpeaking = false;
+    updatePlaybackControlState();
 }
 
 function applyCurrentProviderAudioVolume() {
@@ -250,10 +593,11 @@ function applyCurrentProviderAudioVolume() {
 }
 
 // TTS Functions
-function speakText(text, username, voice = 'default', forceReplay = false, onComplete = null) {
+function speakText(text, username, voice = 'default', forceReplay = false, onComplete = null, playbackContext = 'auto') {
     const ttsEnabled = document.getElementById('ttsEnabled')?.checked;
     const ttsMuted = document.getElementById('ttsMuted')?.checked;
     const ttsSpeed = parseFloat(document.getElementById('ttsSpeed')?.value || 1);
+    const modeMultiplier = getPlaybackSpeedMultiplier(playbackContext);
     const ttsVolume = parseInt(document.getElementById('ttsVolume')?.value || '80', 10);
     
     if (!ttsEnabled || !speechSynthesis) {
@@ -285,6 +629,14 @@ function speakText(text, username, voice = 'default', forceReplay = false, onCom
         debugLog(`🔊 Manual TTS replay: ${username}: ${cleanText.substring(0, 50)}...`);
     }
 
+    const spokenPayload = {
+        text: cleanText,
+        user: username,
+        voice,
+        context: playbackContext,
+        timestamp: new Date().toISOString()
+    };
+
     if (isProviderCustomVoice(voice)) {
         const customVoiceTask = async () => {
             isSpeaking = true;
@@ -293,6 +645,7 @@ function speakText(text, username, voice = 'default', forceReplay = false, onCom
                 await playProviderVoiceAudio(cleanText, voice);
                 isSpeaking = false;
                 ttsCount++;
+                lastSpokenMessage = spokenPayload;
                 updateMessageStats();
                 if (onComplete) onComplete(true);
             } catch (error) {
@@ -314,7 +667,7 @@ function speakText(text, username, voice = 'default', forceReplay = false, onCom
     }
 
     const voiceProfile = getVoiceProfile(voice);
-    const adjustedRate = Math.max(0.5, Math.min(2, ttsSpeed * voiceProfile.rateMultiplier));
+    const adjustedRate = Math.max(0.5, Math.min(2, ttsSpeed * modeMultiplier * voiceProfile.rateMultiplier));
     
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.rate = adjustedRate;
@@ -329,6 +682,7 @@ function speakText(text, username, voice = 'default', forceReplay = false, onCom
     utterance.onend = function() {
         isSpeaking = false;
         ttsCount++;
+        lastSpokenMessage = spokenPayload;
         updateMessageStats();
         debugLog(`🔊 Finished speaking: ${username}`);
         if (onComplete) onComplete(true);
@@ -370,6 +724,20 @@ function setupTTSControls() {
     const speedValueSpan = document.getElementById('speedValue');
     const ttsVolumeSlider = document.getElementById('ttsVolume');
     const volumeValueSpan = document.getElementById('volumeValue');
+    const ttsModeSelect = document.getElementById('ttsModeSelect');
+    const ttsSpeedAutoplay = document.getElementById('ttsSpeedAutoplay');
+    const ttsSpeedManual = document.getElementById('ttsSpeedManual');
+    const ttsSpeedHybrid = document.getElementById('ttsSpeedHybrid');
+    const speedValueAutoplay = document.getElementById('speedValueAutoplay');
+    const speedValueManual = document.getElementById('speedValueManual');
+    const speedValueHybrid = document.getElementById('speedValueHybrid');
+    const ttsTriggerModeSelect = document.getElementById('ttsTriggerModeSelect');
+    const saveTtsTriggerSettingsBtn = document.getElementById('saveTtsTriggerSettingsBtn');
+    const subscribeChannelPointsBtn = document.getElementById('subscribeChannelPointsBtn');
+    const playNextManualBtn = document.getElementById('playNextManualBtn');
+    const skipCurrentBtn = document.getElementById('skipCurrentBtn');
+    const clearQueueBtn = document.getElementById('clearQueueBtn');
+    const replayLastBtn = document.getElementById('replayLastBtn');
 
     if (ttsEnabledCheckbox) {
         ttsEnabledCheckbox.addEventListener('change', function() {
@@ -395,12 +763,89 @@ function setupTTSControls() {
         });
     }
 
+    if (ttsModeSelect) {
+        ttsModeSelect.addEventListener('change', function() {
+            ttsMode = this.value;
+            updateModeDescription();
+            updateMessageStats();
+        });
+    }
+
+    if (ttsTriggerModeSelect) {
+        ttsTriggerModeSelect.addEventListener('change', function() {
+            ttsTriggerMode = this.value;
+            updateTriggerModeDescription();
+            updateMessageStats();
+        });
+    }
+
+    if (saveTtsTriggerSettingsBtn) {
+        saveTtsTriggerSettingsBtn.addEventListener('click', function() {
+            saveTtsTriggerSettings();
+        });
+    }
+
+    if (subscribeChannelPointsBtn) {
+        subscribeChannelPointsBtn.addEventListener('click', function() {
+            subscribeToChannelPointEvents();
+        });
+    }
+
+    if (ttsSpeedAutoplay && speedValueAutoplay) {
+        ttsSpeedAutoplay.addEventListener('input', function() {
+            modeSpeedMultipliers.autoplay = parseFloat(this.value);
+            speedValueAutoplay.textContent = `${this.value}x`;
+        });
+    }
+
+    if (ttsSpeedManual && speedValueManual) {
+        ttsSpeedManual.addEventListener('input', function() {
+            modeSpeedMultipliers.manual = parseFloat(this.value);
+            speedValueManual.textContent = `${this.value}x`;
+        });
+    }
+
+    if (ttsSpeedHybrid && speedValueHybrid) {
+        ttsSpeedHybrid.addEventListener('input', function() {
+            modeSpeedMultipliers.hybrid = parseFloat(this.value);
+            speedValueHybrid.textContent = `${this.value}x`;
+        });
+    }
+
+    if (playNextManualBtn) {
+        playNextManualBtn.addEventListener('click', function() {
+            playNextManualMessage();
+        });
+    }
+
+    if (skipCurrentBtn) {
+        skipCurrentBtn.addEventListener('click', function() {
+            skipCurrentPlayback();
+        });
+    }
+
+    if (clearQueueBtn) {
+        clearQueueBtn.addEventListener('click', function() {
+            clearPlaybackQueue();
+        });
+    }
+
+    if (replayLastBtn) {
+        replayLastBtn.addEventListener('click', function() {
+            replayLastMessage();
+        });
+    }
+
     if (ttsVolumeSlider && volumeValueSpan) {
         ttsVolumeSlider.addEventListener('input', function() {
             volumeValueSpan.textContent = `${this.value}%`;
             applyCurrentProviderAudioVolume();
         });
     }
+
+    updateModeDescription();
+    updateTriggerModeDescription();
+    updatePlaybackControlState();
 }
 
 function renderMonitoringStatus() {
@@ -421,12 +866,19 @@ function updateMessageStats() {
     const messageCountEl = document.getElementById('messageCount');
     const ttsCountEl = document.getElementById('ttsCount');
     const replayCountEl = document.getElementById('replayCount');
+    const manualQueueCountEl = document.getElementById('manualQueueCount');
+    const currentModeStatEl = document.getElementById('currentModeStat');
+    const currentTriggerModeStatEl = document.getElementById('currentTriggerModeStat');
     const lastUpdateEl = document.getElementById('lastUpdate');
     
     if (messageCountEl) messageCountEl.textContent = `Messages: ${displayedMessageCount}`;
     if (ttsCountEl) ttsCountEl.textContent = `TTS Spoken: ${ttsCount}`;
     if (replayCountEl) replayCountEl.textContent = `Manual Replays: ${replayCount}`;
+    if (manualQueueCountEl) manualQueueCountEl.textContent = `Manual Queue: ${manualTTSQueue.length}`;
+    if (currentModeStatEl) currentModeStatEl.textContent = `Mode: ${ttsMode}`;
+    if (currentTriggerModeStatEl) currentTriggerModeStatEl.textContent = `Trigger: ${ttsTriggerMode}`;
     if (lastUpdateEl) lastUpdateEl.textContent = `Last Update: ${new Date().toLocaleTimeString()}`;
+    updatePlaybackControlState();
 }
 
 // Display chat messages
@@ -464,15 +916,22 @@ function displayChatMessages(messages) {
         if (displayedMessages.has(msg.id)) {
             // This message was seen before - preserve its played status
             const existingMsg = displayedMessages.get(msg.id);
-            msg.played = existingMsg.played; 
+            msg.played = existingMsg.played;
+            msg.manualQueued = existingMsg.manualQueued;
             existingMessages++;
             debugLog(`📋 EXISTING message ${msg.id}: played=${msg.played}`);
         } else {
             // This is a truly NEW message - mark for auto-play
             msg.played = false;
+            msg.manualQueued = false;
             newMessages.push(msg);
             debugLog(`📋 NEW message ${msg.id}: will auto-play`);
         }
+
+        if (isMessageInManualQueue(msg.id)) {
+            msg.manualQueued = true;
+        }
+
         // Always update the map with current message object
         displayedMessages.set(msg.id, msg);
     });
@@ -507,10 +966,14 @@ function displayChatMessages(messages) {
         const safeUser = msg.user || 'Unknown';
         const safeMessage = msg.message || '[No message]';
         const ttsDirective = getTTSDirective(msg);
-        const playedIndicator = !ttsDirective.eligible ? '⏭' : (msg.played ? '🔇' : '🔊');
+        const playedIndicator = !ttsDirective.eligible
+            ? '⏭'
+            : (msg.played ? '🔇' : (msg.manualQueued ? '⏸' : '🔊'));
         const indicatorTitle = !ttsDirective.eligible
-            ? 'Ignored for auto TTS (requires !tts command)'
-            : (msg.played ? 'Already played (click to replay)' : 'Not yet played');
+            ? 'Ignored for auto TTS (trigger mode does not allow this message)'
+            : (msg.played
+                ? 'Already played (click to replay)'
+                : (msg.manualQueued ? 'Queued for manual playback' : 'Not yet played'));
         
         messageDiv.innerHTML = `
             <span class="chat-user" ${userStyle}>${escapeHtml(safeUser)}</span>
@@ -529,6 +992,9 @@ function displayChatMessages(messages) {
 
             debugLog(`🔊 Manual replay requested for: ${safeUser}: ${safeMessage}`);
             replayCount++;
+            removeMessageFromManualQueue(msg.id);
+            msg.manualQueued = false;
+            displayedMessages.set(msg.id, msg);
             
             const indicator = messageDiv.querySelector('.play-indicator');
             if (indicator) {
@@ -541,12 +1007,14 @@ function displayChatMessages(messages) {
                     if (success) {
                         indicator.textContent = '🔇';
                         indicator.title = 'Already played (click to replay)';
+                        msg.played = true;
+                        displayedMessages.set(msg.id, msg);
                     } else {
                         indicator.textContent = '❌';
                         indicator.title = 'TTS failed (click to retry)';
                     }
                 }
-            });
+            }, 'manual');
             updateMessageStats();
         });
         
@@ -560,23 +1028,34 @@ function displayChatMessages(messages) {
         if (safeMessage && safeMessage !== '[No message]') {
             const isNewMessage = newMessages.some(newMsg => newMsg.id === msg.id);
             if (isNewMessage && !msg.played && ttsDirective.eligible) {
-                setTimeout(() => {
-                    debugLog(`🔊 AUTO-PLAYING NEW message: ${safeUser}: ${ttsDirective.text.substring(0, 30)}...`);
-                    speakText(ttsDirective.text, safeUser, ttsDirective.voice, false, (success) => {
-                        if (success) {
-                            msg.played = true;
-                            // Update the message in the displayedMessages Map
-                            displayedMessages.set(msg.id, msg);
-                            
-                            const indicator = messageDiv.querySelector('.play-indicator');
-                            if (indicator) {
-                                indicator.textContent = '🔇';
-                                indicator.title = 'Already played (click to replay)';
+                if (shouldAutoplayMessage(msg)) {
+                    setTimeout(() => {
+                        debugLog(`🔊 AUTO-PLAYING NEW message: ${safeUser}: ${ttsDirective.text.substring(0, 30)}...`);
+                        speakText(ttsDirective.text, safeUser, ttsDirective.voice, false, (success) => {
+                            if (success) {
+                                msg.played = true;
+                                msg.manualQueued = false;
+                                displayedMessages.set(msg.id, msg);
+
+                                const indicator = messageDiv.querySelector('.play-indicator');
+                                if (indicator) {
+                                    indicator.textContent = '🔇';
+                                    indicator.title = 'Already played (click to replay)';
+                                }
+                                debugLog(`🔊 Message marked as played: ${safeUser}`);
                             }
-                            debugLog(`🔊 Message marked as played: ${safeUser}`);
-                        }
-                    });
-                }, index * 200); // Stagger auto-play timing
+                        }, ttsMode === 'hybrid' ? 'hybrid' : 'auto');
+                    }, index * 200); // Stagger auto-play timing
+                } else {
+                    queueMessageForManualPlayback(msg, ttsDirective);
+                    msg.manualQueued = true;
+                    displayedMessages.set(msg.id, msg);
+                    const indicator = messageDiv.querySelector('.play-indicator');
+                    if (indicator) {
+                        indicator.textContent = '⏸';
+                        indicator.title = 'Queued for manual playback';
+                    }
+                }
             } else {
                 debugLog(`🔊 SKIPPING auto-play for message ${msg.id}: isNew=${isNewMessage}, played=${msg.played}, eligible=${ttsDirective.eligible}`);
             }
@@ -629,15 +1108,36 @@ async function getLiveChatMessages() {
         const data = await response.json();
         debugLog('📡 Response received:', data);
 
+        if (data.tts_trigger) {
+            applyTtsSettings({
+                mode: data.tts_trigger.mode || ttsTriggerMode,
+                channelPointsRewardTitle: data.tts_trigger.reward_title || channelPointsRewardTitle,
+                subscriptionStatus: data.tts_trigger.subscription_status || 'not_attempted',
+                subscriptionError: data.tts_trigger.subscription_error || null,
+                lastAcceptedRedemption: data.tts_trigger.last_redemption_at
+                    ? {
+                        rewardTitle: data.tts_trigger.reward_title || channelPointsRewardTitle,
+                        user: 'recent redemption'
+                    }
+                    : null
+            });
+        }
+
         if (data.success && data.messages) {
             debugLog(`📡 Retrieved ${data.messages.length} messages`);
             displayChatMessages(data.messages);
         } else {
             console.error('❌ Failed to get messages:', data.error || 'Unknown error');
+            if (chatContainer) {
+                chatContainer.innerHTML = `<div class="no-messages">❌ ${escapeHtml(data.error || 'Failed to get chat messages')}</div>`;
+            }
         }
 
     } catch (error) {
         console.error('❌ Error fetching live chat messages:', error);
+        if (chatContainer) {
+            chatContainer.innerHTML = `<div class="no-messages">❌ ${escapeHtml(error.message || 'Error fetching chat messages')}</div>`;
+        }
     }
 }
 
@@ -654,6 +1154,12 @@ function startChatPolling() {
     // Set timestamp for filtering new messages only
     startMonitoringTimestamp = new Date().toISOString();
     debugLog('📅 Start monitoring timestamp:', startMonitoringTimestamp);
+
+    manualTTSQueue = [];
+    ttsQueue = [];
+    displayedMessages.clear();
+    displayedMessageCount = 0;
+    updateMessageStats();
     
     // Clear previous messages to start fresh
     const chatContainer = document.getElementById('liveChatMessages');
@@ -686,6 +1192,8 @@ function stopChatPolling() {
     // Reset monitoring timestamp
     startMonitoringTimestamp = null;
     debugLog('📅 Monitoring timestamp reset');
+
+    clearPlaybackQueue();
     
     updateUI();
 }
@@ -813,10 +1321,32 @@ function setupEventListeners() {
 // Initialize the app
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🚀 DOM loaded, initializing app...');
+
+    const ttsModeSelect = document.getElementById('ttsModeSelect');
+    const ttsSpeedAutoplay = document.getElementById('ttsSpeedAutoplay');
+    const ttsSpeedManual = document.getElementById('ttsSpeedManual');
+    const ttsSpeedHybrid = document.getElementById('ttsSpeedHybrid');
+
+    if (ttsModeSelect) {
+        ttsMode = ttsModeSelect.value;
+    }
+    if (ttsSpeedAutoplay) {
+        modeSpeedMultipliers.autoplay = parseFloat(ttsSpeedAutoplay.value || '1');
+    }
+    if (ttsSpeedManual) {
+        modeSpeedMultipliers.manual = parseFloat(ttsSpeedManual.value || '1');
+    }
+    if (ttsSpeedHybrid) {
+        modeSpeedMultipliers.hybrid = parseFloat(ttsSpeedHybrid.value || '1');
+    }
     
     checkAuthenticationStatus();
     setupEventListeners();
     updateUI();
+    updateModeDescription();
+    updateTriggerModeDescription();
+    updateMessageStats();
+    loadTtsSettings();
     
     // Set default channel if available
     if (channelInput && channelInput.value) {
@@ -836,4 +1366,9 @@ socket.on('disconnect', function() {
 socket.on('chatMessage', function(message) {
     debugLog('💬 Chat message received via socket:', message);
     // Handle real-time messages if needed
+});
+
+socket.on('channel-point-redemption', function(message) {
+    debugLog('🎟️ Channel point redemption received via socket:', message);
+    injectRealtimeMessage(message);
 });

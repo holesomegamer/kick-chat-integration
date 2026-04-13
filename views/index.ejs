@@ -82,6 +82,58 @@
                         <span id="volumeValue">80%</span>
                     </label>
                 </div>
+                <div class="tts-mode-grid">
+                    <label for="ttsModeSelect">
+                        Playback Mode:
+                        <select id="ttsModeSelect">
+                            <option value="autoplay" selected>Autoplay</option>
+                            <option value="manual">Manual</option>
+                            <option value="hybrid">Hybrid</option>
+                        </select>
+                    </label>
+                    <label>
+                        Autoplay Speed:
+                        <input type="range" id="ttsSpeedAutoplay" min="0.5" max="2" step="0.1" value="1.0">
+                        <span id="speedValueAutoplay">1.0x</span>
+                    </label>
+                    <label>
+                        Manual Speed:
+                        <input type="range" id="ttsSpeedManual" min="0.5" max="2" step="0.1" value="1.0">
+                        <span id="speedValueManual">1.0x</span>
+                    </label>
+                    <label>
+                        Hybrid Speed:
+                        <input type="range" id="ttsSpeedHybrid" min="0.5" max="2" step="0.1" value="1.0">
+                        <span id="speedValueHybrid">1.0x</span>
+                    </label>
+                </div>
+                <div class="tts-mode-grid">
+                    <label for="ttsTriggerModeSelect">
+                        Trigger Mode:
+                        <select id="ttsTriggerModeSelect" <%= !isAuthenticated ? 'disabled' : '' %>>
+                            <option value="chat_commands" selected>Chat Commands Only</option>
+                            <option value="channel_points">Channel Points Only</option>
+                            <option value="both">Chat Commands + Channel Points</option>
+                        </select>
+                    </label>
+                    <label for="channelPointsRewardTitleInput">
+                        Channel Point Reward Title:
+                        <input type="text" id="channelPointsRewardTitleInput" value="Test-tts" placeholder="Test-tts" <%= !isAuthenticated ? 'disabled' : '' %>>
+                    </label>
+                </div>
+                <div class="button-group tts-playback-actions">
+                    <button id="saveTtsTriggerSettingsBtn" class="btn btn-secondary" type="button" <%= !isAuthenticated ? 'disabled' : '' %>>Save Trigger Settings</button>
+                    <button id="subscribeChannelPointsBtn" class="btn btn-success" type="button" <%= !isAuthenticated ? 'disabled' : '' %>>Subscribe To Reward Redemptions</button>
+                </div>
+                <div class="button-group tts-playback-actions">
+                    <button id="playNextManualBtn" class="btn btn-primary" type="button">Play Next Manual</button>
+                    <button id="skipCurrentBtn" class="btn btn-warning" type="button">Skip Current</button>
+                    <button id="clearQueueBtn" class="btn btn-secondary" type="button">Clear Queue</button>
+                    <button id="replayLastBtn" class="btn btn-info" type="button">Replay Last</button>
+                </div>
+                <p id="ttsModeDescription" class="tts-mode-description">Autoplay mode reads all eligible new messages automatically.</p>
+                <p id="ttsTriggerModeDescription" class="tts-mode-description">Chat commands are currently the only accepted trigger.</p>
+                <p id="channelPointsStatus" class="tts-mode-description">Reward redemptions are not subscribed yet.</p>
             </div>
 
             <div class="chat-section">
@@ -90,6 +142,9 @@
                     <span id="messageCount">Messages: 0</span>
                     <span id="ttsCount">TTS Spoken: 0</span>
                     <span id="replayCount">Manual Replays: 0</span>
+                    <span id="manualQueueCount">Manual Queue: 0</span>
+                    <span id="currentModeStat">Mode: autoplay</span>
+                    <span id="currentTriggerModeStat">Trigger: chat_commands</span>
                     <span id="lastUpdate">Last Update: Never</span>
                 </div>
                 <div id="liveChatMessages" class="chat-container">

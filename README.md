@@ -11,6 +11,7 @@ A Node.js web application that integrates with Kick.com's chat API to display re
 - **Status Checking** functionality
 - **Voice Library UI** for adding, editing, deleting, and tracking voice entries
 - **Custom Voice Commands** (for example `!me`) mapped from ready voices
+- **Channel Point Redemption Trigger Mode** for reward-only TTS flows
 - **Local TTS Provider Support** (CPU, no cloud calls required)
 - **Responsive Web Interface** with modern UI
 
@@ -71,7 +72,7 @@ Typical first-time flow:
 
 1. Go to [Kick.com Developer Console](https://kick.com/developer/applications)
 2. Create a new application
-3. Set the redirect URI to: `http://localhost:3001/auth/callback`
+3. Set the redirect URI to: `http://localhost:3000/auth/callback`
 4. Copy the Client ID and Client Secret to your `.env` file
 
 ### 2. Environment Variables
@@ -81,9 +82,9 @@ Update your `.env` file with the following:
 ```env
 KICK_CLIENT_ID=your_kick_client_id_here
 KICK_CLIENT_SECRET=your_kick_client_secret_here
-REDIRECT_URI=http://localhost:3001/auth/callback
+REDIRECT_URI=http://localhost:3000/auth/callback
 SESSION_SECRET=your_random_session_secret_here
-PORT=3001
+PORT=3000
 ```
 
 Minimal required fields for login and chat monitoring are:
@@ -92,6 +93,12 @@ Minimal required fields for login and chat monitoring are:
 - `KICK_CLIENT_SECRET`
 - `REDIRECT_URI`
 - `SESSION_SECRET`
+
+Optional but useful for webhook-based reward redemptions:
+
+```env
+PUBLIC_BASE_URL=https://your-public-app-url.example
+```
 
 ### 3. Local Voice Provider Mode (No Cloud Calls)
 
@@ -102,11 +109,11 @@ LOCAL_TTS_ENABLED=true
 LOCAL_TTS_BASE_URL=http://127.0.0.1:8000
 ```
 
-For this repo, the main app is typically run on port 3001 to avoid common conflicts:
+For this repo, the main app runs on port 3000 by default:
 
 ```env
-PORT=3001
-REDIRECT_URI=http://localhost:3001/auth/callback
+PORT=3000
+REDIRECT_URI=http://localhost:3000/auth/callback
 ```
 
 When local mode is enabled, the app calls your localhost voice service and does not use ElevenLabs for new clone/synthesis jobs.
@@ -123,6 +130,26 @@ Expected localhost endpoints:
 
 If local mode is disabled and `ELEVENLABS_API_KEY` is set, the app uses ElevenLabs. If neither is configured, it uses mock mode for workflow testing.
 
+### 4. Channel Point Redemption Webhooks
+
+If you want TTS to trigger from a channel point reward like `Test-tts`, Kick must be able to reach your app over the public internet.
+
+1. Expose the app publicly with ngrok, Cloudflare Tunnel, or another tunnel.
+2. In your Kick app settings, enable webhooks and set the webhook URL to:
+   `https://your-public-url/api/kick/webhooks`
+3. In the app UI, set:
+   - Trigger Mode: `Channel Points Only`
+   - Channel Point Reward Title: `Test-tts`
+4. Click `Subscribe To Reward Redemptions` after logging in.
+5. Make sure the Kick reward itself is configured to require user input.
+
+Notes:
+
+- The app listens for the Kick event `channel.reward.redemption.updated`.
+- Matching redemptions are filtered by reward title, case-insensitively.
+- Redemptions with empty user input are ignored.
+- For the smoothest behavior, use a reward flow that auto-processes redemptions rather than leaving them pending for manual approval.
+
 ## 🚀 Usage
 
 ### 1. Start the Application
@@ -136,9 +163,9 @@ Or for development with auto-reload:
 npm run dev
 ```
 
-The application will be available at `http://localhost:3001`.
+The application will be available at `http://localhost:3000`.
 
-If you use `npm run start:all`, open `http://localhost:3001`.
+If you use `npm run start:all`, open `http://localhost:3000`.
 
 ### 2. Using the Application
 
@@ -148,6 +175,19 @@ If you use `npm run start:all`, open `http://localhost:3001`.
 4. **View Messages**: Chat messages will appear in real-time in the chat section
 5. **Check Status**: Use "Check Status" to see current monitoring state
 6. **Stop Monitoring**: Click "Stop Monitoring" to stop receiving messages
+
+### 3. Channel Points Only TTS
+
+To require a channel point redemption instead of `!tts` commands:
+
+1. Log in and open the main dashboard.
+2. Set `Trigger Mode` to `Channel Points Only`.
+3. Set `Channel Point Reward Title` to the exact reward title, for example `Test-tts`.
+4. Save trigger settings.
+5. Subscribe to reward redemptions.
+6. Start monitoring your channel.
+
+When a viewer redeems that reward and enters text, the redemption is injected into the live message feed and follows the normal TTS playback rules.
 
 ## 📡 API Endpoints
 
@@ -162,6 +202,10 @@ If you use `npm run start:all`, open `http://localhost:3001`.
 - `GET /channel/:channel` - Validates channel access
 - `GET /status` - Current monitoring and auth status
 - `POST /api/get-live-chat-messages` - Polls latest live chat messages
+- `GET /api/tts/settings` - Returns trigger mode and reward redemption settings
+- `POST /api/tts/settings` - Updates trigger mode and reward title
+- `POST /api/kick/channel-point-subscription` - Subscribes the logged-in broadcaster to reward redemption events
+- `POST /api/kick/webhooks` - Receives Kick webhook events, including reward redemptions
 
 ### Voice Management
 - `GET /voices` - Voice library page
@@ -247,6 +291,12 @@ kick-chat-integration/
    - Ensure WebSocket connection is established
    - Check browser console for JavaScript errors
    - Verify chat monitoring is started
+
+4. **Channel Point Redemptions Not Triggering TTS**
+   - Confirm your Kick app webhook URL is public and points to `/api/kick/webhooks`
+   - Confirm you clicked `Subscribe To Reward Redemptions` after logging in
+   - Confirm the reward title in the dashboard exactly matches your Kick reward title
+   - Confirm the reward includes user text input
 
 4. **First Local Voice Generation Is Slow**
    - First local synthesis may download model files and warm up CPU inference

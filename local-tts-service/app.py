@@ -1,4 +1,5 @@
 import json
+import threading
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -20,20 +21,23 @@ VOICE_DB = DATA_DIR / "voices.json"
 # ---------------------------------------------------------------------------
 _tts_model = None
 _tts_model_loaded = False
+_tts_model_lock = threading.Lock()
 
 
 def _get_model():
     global _tts_model, _tts_model_loaded
     if not _tts_model_loaded:
-        _tts_model_loaded = True
-        try:
-            from chatterbox.tts import ChatterboxTTS
-            print("[TTS] Loading Chatterbox model (CPU) — first load downloads ~1 GB from HuggingFace …")
-            _tts_model = ChatterboxTTS.from_pretrained(device="cpu")
-            print("[TTS] Chatterbox model ready.")
-        except Exception as exc:
-            print(f"[TTS] Failed to load Chatterbox model: {exc}")
-            _tts_model = None
+        with _tts_model_lock:
+            if not _tts_model_loaded:
+                _tts_model_loaded = True
+                try:
+                    from chatterbox.tts import ChatterboxTTS
+                    print("[TTS] Loading Chatterbox model (CPU) — first load downloads ~1 GB from HuggingFace …")
+                    _tts_model = ChatterboxTTS.from_pretrained(device="cpu")
+                    print("[TTS] Chatterbox model ready.")
+                except Exception as exc:
+                    print(f"[TTS] Failed to load Chatterbox model: {exc}")
+                    _tts_model = None
     return _tts_model
 
 
@@ -89,7 +93,22 @@ def health():
     return {
         "ok": True,
         "service": "kick-local-tts",
-        "model": "chatterbox" if _tts_model is not None else "loading",
+        "model": "chatterbox" if _tts_model is not None else "not_loaded",
+        "time": datetime.utcnow().isoformat() + "Z"
+    }
+
+
+@app.post("/warmup")
+def warmup_model():
+    model = _get_model()
+    if model is None:
+        raise HTTPException(status_code=503, detail="Chatterbox model failed to load")
+
+    return {
+        "ok": True,
+        "service": "kick-local-tts",
+        "model": "chatterbox",
+        "status": "ready",
         "time": datetime.utcnow().isoformat() + "Z"
     }
 
