@@ -2,9 +2,9 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $localServiceRoot = Join-Path $repoRoot "local-tts-service"
-$localVenvUvicorn = Join-Path $localServiceRoot "venv311\Scripts\uvicorn.exe"
+$localVenvActivate = Join-Path $localServiceRoot "venv311\Scripts\Activate.ps1"
 
-if (-not (Test-Path $localVenvUvicorn)) {
+if (-not (Test-Path $localVenvActivate)) {
     throw "Local TTS venv is missing. Run 'npm run setup:local-tts' first."
 }
 
@@ -12,7 +12,7 @@ Write-Host "[start] Starting local TTS service in a new terminal..."
 Start-Process powershell -ArgumentList @(
     "-NoExit",
     "-Command",
-    "Set-Location '$repoRoot'; & '$localVenvUvicorn' app:app --host 127.0.0.1 --port 8000 --app-dir '$localServiceRoot'"
+    "Set-Location '$repoRoot'; & '$localVenvActivate'; uvicorn app:app --host 127.0.0.1 --port 8000 --app-dir '$localServiceRoot'"
 )
 
 Write-Host "[start] Starting main app in a new terminal..."
