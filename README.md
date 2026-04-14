@@ -1,4 +1,4 @@
-# Kick.com Chat Integration Web App
+# Kick2TTS Web App
 
 A Node.js web application that integrates with Kick.com's chat API to display real-time chat messages on a local website, with optional local voice synthesis.
 

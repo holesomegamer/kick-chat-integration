@@ -595,7 +595,7 @@ function updateUI() {
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('🚀 DOM loaded, initializing Kick.com Chat Integration...');
+    console.log('🚀 DOM loaded, initializing Kick2TTS...');
     
     checkAuthenticationStatus();
     setupEventListeners();

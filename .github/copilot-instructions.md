@@ -1,4 +1,4 @@
-<!-- Kick.com Chat Integration Web App -->
+<!-- Kick2TTS Web App -->
 # Project: Kick.com Chat to Web Integration
 
 ## Project Overview

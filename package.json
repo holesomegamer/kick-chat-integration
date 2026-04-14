@@ -9,7 +9,8 @@
     "setup:core": "powershell -ExecutionPolicy Bypass -File ./scripts/setup-core.ps1",
     "setup:local-tts": "powershell -ExecutionPolicy Bypass -File ./scripts/setup-local-tts.ps1",
     "start:all": "powershell -ExecutionPolicy Bypass -File ./scripts/start-all.ps1",
-    "diagnose": "powershell -ExecutionPolicy Bypass -File ./scripts/diagnose.ps1"
+    "diagnose": "powershell -ExecutionPolicy Bypass -File ./scripts/diagnose.ps1",
+    "export": "powershell -ExecutionPolicy Bypass -File ./scripts/export-project.ps1"
   },
   "keywords": [
     "kick",

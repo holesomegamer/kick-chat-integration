@@ -1,7 +1,7 @@
 # Kick Chat Integration - Feature Roadmap
 
 ## Overview
-This document tracks future features and enhancements planned for the Kick.com Chat Integration web application.
+This document tracks future features and enhancements planned for the Kick2TTS web application.
 
 ## Planned Features
 
