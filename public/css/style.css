@@ -423,6 +423,42 @@ header h1 {
     margin-top: 8px;
 }
 
+.activity-dock {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 1200;
+    min-width: 280px;
+    max-width: min(420px, calc(100vw - 24px));
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(0, 255, 136, 0.35);
+    background: rgba(5, 18, 10, 0.92);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(10px);
+}
+
+.activity-dock h4 {
+    margin: 0 0 8px 0;
+    color: #00ff88;
+    font-size: 0.85rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.tts-processing-indicator {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    margin: 6px 0 0 0;
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 0.9rem;
+}
+
+.tts-processing-indicator.active {
+    display: flex;
+}
+
 .tts-mode-description {
     margin-top: 10px;
     color: rgba(255, 255, 255, 0.7);
@@ -757,6 +793,48 @@ header h1 {
     text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
 }
 
+.chat-processing-indicator {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 0;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.9rem;
+}
+
+.chat-processing-indicator.active {
+    display: flex;
+}
+
+.cube-loader {
+    position: relative;
+    width: 16px;
+    height: 16px;
+    transform-style: preserve-3d;
+    animation: cubeSpin 1.2s linear infinite;
+}
+
+.cube-face {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border: 1px solid rgba(0, 255, 136, 0.8);
+    background: rgba(0, 255, 136, 0.2);
+    box-shadow: inset 0 0 8px rgba(0, 255, 136, 0.35);
+}
+
+.cube-face.front { transform: translateZ(8px); }
+.cube-face.back { transform: rotateY(180deg) translateZ(8px); }
+.cube-face.right { transform: rotateY(90deg) translateZ(8px); }
+.cube-face.left { transform: rotateY(-90deg) translateZ(8px); }
+.cube-face.top { transform: rotateX(90deg) translateZ(8px); }
+.cube-face.bottom { transform: rotateX(-90deg) translateZ(8px); }
+
+@keyframes cubeSpin {
+    0% { transform: rotateX(-20deg) rotateY(0deg); }
+    100% { transform: rotateX(-20deg) rotateY(360deg); }
+}
+
 .chat-stats {
     padding: 0 25px 15px 25px;
     display: flex;
@@ -793,7 +871,7 @@ header h1 {
 }
 
 .chat-message {
-    padding: 15px 25px;
+    padding: 15px 160px 15px 25px;
     border-bottom: 1px solid rgba(0, 255, 136, 0.1);
     transition: all 0.3s ease;
     cursor: pointer;
@@ -1296,6 +1374,35 @@ footer {
     .chat-stats {
         flex-direction: column;
         gap: 5px;
+    }
+
+    .activity-dock {
+        right: 10px;
+        bottom: 10px;
+        min-width: 0;
+        width: calc(100vw - 20px);
+        max-width: calc(100vw - 20px);
+    }
+
+    .activity-dock h4 {
+        margin-bottom: 6px;
+        font-size: 0.78rem;
+    }
+
+    .chat-processing-indicator,
+    .tts-processing-indicator {
+        font-size: 0.82rem;
+    }
+
+    .chat-message {
+        padding: 14px 120px 14px 18px;
+    }
+
+    .chat-message::after {
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 0.75rem;
     }
 
     .voices-toolbar,

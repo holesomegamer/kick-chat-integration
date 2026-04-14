@@ -11,7 +11,6 @@ A Node.js web application that integrates with Kick.com's chat API to display re
 - **Status Checking** functionality
 - **Voice Library UI** for adding, editing, deleting, and tracking voice entries
 - **Custom Voice Commands** (for example `!me`) mapped from ready voices
-- **Channel Point Redemption Trigger Mode** for reward-only TTS flows
 - **Local TTS Provider Support** (CPU, no cloud calls required)
 - **Responsive Web Interface** with modern UI
 
@@ -66,6 +65,22 @@ Typical first-time flow:
 2. Optional: `npm run setup:local-tts`
 3. `npm run start:all`
 
+### Python Verification (Local TTS Only)
+
+Before running `npm run setup:local-tts`, verify Python 3.11 is available:
+
+```powershell
+py --list
+py -3.11 --version
+```
+
+Expected result:
+
+- `py --list` includes a `3.11` entry
+- `py -3.11 --version` prints `Python 3.11.x`
+
+If either command fails, install Python 3.11 from python.org and rerun the check.
+
 ## ⚙️ Configuration
 
 ### 1. Kick.com OAuth Setup
@@ -93,12 +108,6 @@ Minimal required fields for login and chat monitoring are:
 - `KICK_CLIENT_SECRET`
 - `REDIRECT_URI`
 - `SESSION_SECRET`
-
-Optional but useful for webhook-based reward redemptions:
-
-```env
-PUBLIC_BASE_URL=https://your-public-app-url.example
-```
 
 ### 3. Local Voice Provider Mode (No Cloud Calls)
 
@@ -130,26 +139,6 @@ Expected localhost endpoints:
 
 If local mode is disabled and `ELEVENLABS_API_KEY` is set, the app uses ElevenLabs. If neither is configured, it uses mock mode for workflow testing.
 
-### 4. Channel Point Redemption Webhooks
-
-If you want TTS to trigger from a channel point reward like `Test-tts`, Kick must be able to reach your app over the public internet.
-
-1. Expose the app publicly with ngrok, Cloudflare Tunnel, or another tunnel.
-2. In your Kick app settings, enable webhooks and set the webhook URL to:
-   `https://your-public-url/api/kick/webhooks`
-3. In the app UI, set:
-   - Trigger Mode: `Channel Points Only`
-   - Channel Point Reward Title: `Test-tts`
-4. Click `Subscribe To Reward Redemptions` after logging in.
-5. Make sure the Kick reward itself is configured to require user input.
-
-Notes:
-
-- The app listens for the Kick event `channel.reward.redemption.updated`.
-- Matching redemptions are filtered by reward title, case-insensitively.
-- Redemptions with empty user input are ignored.
-- For the smoothest behavior, use a reward flow that auto-processes redemptions rather than leaving them pending for manual approval.
-
 ## 🚀 Usage
 
 ### 1. Start the Application
@@ -176,19 +165,6 @@ If you use `npm run start:all`, open `http://localhost:3000`.
 5. **Check Status**: Use "Check Status" to see current monitoring state
 6. **Stop Monitoring**: Click "Stop Monitoring" to stop receiving messages
 
-### 3. Channel Points Only TTS
-
-To require a channel point redemption instead of `!tts` commands:
-
-1. Log in and open the main dashboard.
-2. Set `Trigger Mode` to `Channel Points Only`.
-3. Set `Channel Point Reward Title` to the exact reward title, for example `Test-tts`.
-4. Save trigger settings.
-5. Subscribe to reward redemptions.
-6. Start monitoring your channel.
-
-When a viewer redeems that reward and enters text, the redemption is injected into the live message feed and follows the normal TTS playback rules.
-
 ## 📡 API Endpoints
 
 ### Authentication
@@ -202,10 +178,8 @@ When a viewer redeems that reward and enters text, the redemption is injected in
 - `GET /channel/:channel` - Validates channel access
 - `GET /status` - Current monitoring and auth status
 - `POST /api/get-live-chat-messages` - Polls latest live chat messages
-- `GET /api/tts/settings` - Returns trigger mode and reward redemption settings
-- `POST /api/tts/settings` - Updates trigger mode and reward title
-- `POST /api/kick/channel-point-subscription` - Subscribes the logged-in broadcaster to reward redemption events
-- `POST /api/kick/webhooks` - Receives Kick webhook events, including reward redemptions
+- `GET /api/tts/settings` - Returns TTS settings
+- `POST /api/tts/settings` - Updates TTS settings
 
 ### Voice Management
 - `GET /voices` - Voice library page
@@ -292,13 +266,12 @@ kick-chat-integration/
    - Check browser console for JavaScript errors
    - Verify chat monitoring is started
 
-4. **Channel Point Redemptions Not Triggering TTS**
-   - Confirm your Kick app webhook URL is public and points to `/api/kick/webhooks`
-   - Confirm you clicked `Subscribe To Reward Redemptions` after logging in
-   - Confirm the reward title in the dashboard exactly matches your Kick reward title
-   - Confirm the reward includes user text input
+4. **TTS Not Triggering**
+   - Confirm TTS is enabled in the app settings
+   - Confirm your voice tag exists and is marked ready in the Voice Library
+   - Confirm your message format matches your configured trigger mode
 
-4. **First Local Voice Generation Is Slow**
+5. **First Local Voice Generation Is Slow**
    - First local synthesis may download model files and warm up CPU inference
    - This can take significantly longer than later requests
    - Use `npm run diagnose` and check `http://127.0.0.1:8000/health`

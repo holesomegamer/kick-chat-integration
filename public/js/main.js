@@ -11,6 +11,11 @@ const channelInput = document.getElementById('channelInput');
 const chatContainer = document.getElementById('liveChatMessages');
 const statusDisplay = document.getElementById('statusDisplay');
 const messageCount = document.getElementById('messageCount');
+const chatProcessingIndicator = document.getElementById('chatProcessingIndicator');
+const chatProcessingText = document.getElementById('chatProcessingText');
+const ttsProcessingIndicator = document.getElementById('ttsProcessingIndicator');
+const ttsProcessingText = document.getElementById('ttsProcessingText');
+const activityDock = document.getElementById('activityDock');
 
 // Moderation DOM elements
 const enableBanListCheckbox = document.getElementById('enableBanList');
@@ -31,6 +36,8 @@ let isPollingActive = false;
 let debugMode = false;
 let pollingInterval = null;
 let startMonitoringTimestamp = null; // Timestamp when monitoring started
+let activeChatFetchRequests = 0;
+let activeTtsGenerationRequests = 0;
 
 // TTS variables
 let ttsQueue = [];
@@ -132,6 +139,54 @@ function formatTimestamp(timestamp) {
         debugLog('❌ Error formatting timestamp:', error);
         return 'Invalid Date';
     }
+}
+
+function setChatProcessingState(isProcessing) {
+    if (!chatProcessingIndicator) {
+        return;
+    }
+
+    chatProcessingIndicator.classList.toggle('active', isProcessing);
+    chatProcessingIndicator.style.display = isProcessing ? 'flex' : 'none';
+
+    if (chatProcessingText) {
+        chatProcessingText.textContent = isProcessing
+            ? 'Processing new chat messages...'
+            : 'Chat processing idle';
+    }
+
+    updateActivityDockVisibility();
+}
+
+function setTtsProcessingState(isProcessing, voiceTag = null) {
+    if (!ttsProcessingIndicator) {
+        return;
+    }
+
+    ttsProcessingIndicator.classList.toggle('active', isProcessing);
+    ttsProcessingIndicator.style.display = isProcessing ? 'flex' : 'none';
+
+    if (ttsProcessingText) {
+        if (isProcessing) {
+            const normalizedVoice = String(voiceTag || '').trim();
+            ttsProcessingText.textContent = normalizedVoice
+                ? `Generating voice !${normalizedVoice}...`
+                : 'Waiting for TTS generation...';
+        } else {
+            ttsProcessingText.textContent = 'TTS generation idle';
+        }
+    }
+
+    updateActivityDockVisibility();
+}
+
+function updateActivityDockVisibility() {
+    if (!activityDock) {
+        return;
+    }
+
+    const hasActivity = activeChatFetchRequests > 0 || activeTtsGenerationRequests > 0;
+    activityDock.style.display = hasActivity ? 'block' : 'none';
 }
 
 // Moderation functions
@@ -681,32 +736,41 @@ function isProviderCustomVoice(voice) {
 }
 
 async function playProviderVoiceAudio(text, voice) {
-    const response = await fetch('/api/tts/custom', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            voiceTag: voice,
-            text
-        })
-    });
+    activeTtsGenerationRequests += 1;
+    setTtsProcessingState(true, voice);
 
-    if (!response.ok) {
-        let serverMessage = 'Failed to synthesize custom voice audio.';
-        try {
-            const payload = await response.json();
-            if (payload?.error) {
-                serverMessage = payload.error;
+    let audioUrl = null;
+    try {
+        const response = await fetch('/api/tts/custom', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                voiceTag: voice,
+                text
+            })
+        });
+
+        if (!response.ok) {
+            let serverMessage = 'Failed to synthesize custom voice audio.';
+            try {
+                const payload = await response.json();
+                if (payload?.error) {
+                    serverMessage = payload.error;
+                }
+            } catch (_error) {
+                // Ignore JSON parse errors and keep fallback message.
             }
-        } catch (_error) {
-            // Ignore JSON parse errors and keep fallback message.
+            throw new Error(serverMessage);
         }
-        throw new Error(serverMessage);
-    }
 
-    const audioBlob = await response.blob();
-    const audioUrl = URL.createObjectURL(audioBlob);
+        const audioBlob = await response.blob();
+        audioUrl = URL.createObjectURL(audioBlob);
+    } finally {
+        activeTtsGenerationRequests = Math.max(0, activeTtsGenerationRequests - 1);
+        setTtsProcessingState(activeTtsGenerationRequests > 0);
+    }
 
     return new Promise((resolve, reject) => {
         const audio = new Audio(audioUrl);
@@ -1292,6 +1356,9 @@ async function getLiveChatMessages() {
         return;
     }
 
+    activeChatFetchRequests += 1;
+    setChatProcessingState(true);
+
     try {
         debugLog('📡 Making fetch request to /api/get-live-chat-messages');
         
@@ -1350,6 +1417,9 @@ async function getLiveChatMessages() {
         if (chatContainer) {
             chatContainer.innerHTML = `<div class="no-messages">❌ ${escapeHtml(error.message || 'Error fetching chat messages')}</div>`;
         }
+    } finally {
+        activeChatFetchRequests = Math.max(0, activeChatFetchRequests - 1);
+        setChatProcessingState(activeChatFetchRequests > 0);
     }
 }
 
@@ -1404,6 +1474,10 @@ function stopChatPolling() {
     // Reset monitoring timestamp
     startMonitoringTimestamp = null;
     debugLog('📅 Monitoring timestamp reset');
+    activeChatFetchRequests = 0;
+    setChatProcessingState(false);
+    activeTtsGenerationRequests = 0;
+    setTtsProcessingState(false);
 
     clearPlaybackQueue();
     

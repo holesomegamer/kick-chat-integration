@@ -202,6 +202,32 @@
         </footer>
     </div>
 
+    <aside id="activityDock" class="activity-dock" aria-live="polite" style="display: none;">
+        <h4>Live Activity</h4>
+        <div id="chatProcessingIndicator" class="chat-processing-indicator" style="display: none;">
+            <div class="cube-loader" aria-hidden="true">
+                <span class="cube-face front"></span>
+                <span class="cube-face back"></span>
+                <span class="cube-face right"></span>
+                <span class="cube-face left"></span>
+                <span class="cube-face top"></span>
+                <span class="cube-face bottom"></span>
+            </div>
+            <span id="chatProcessingText">Processing new chat messages...</span>
+        </div>
+        <div id="ttsProcessingIndicator" class="tts-processing-indicator" style="display: none;">
+            <div class="cube-loader" aria-hidden="true">
+                <span class="cube-face front"></span>
+                <span class="cube-face back"></span>
+                <span class="cube-face right"></span>
+                <span class="cube-face left"></span>
+                <span class="cube-face top"></span>
+                <span class="cube-face bottom"></span>
+            </div>
+            <span id="ttsProcessingText">Waiting for TTS generation...</span>
+        </div>
+    </aside>
+
     <script src="/js/main.js"></script>
 </body>
 </html>

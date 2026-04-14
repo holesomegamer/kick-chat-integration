@@ -55,12 +55,20 @@ def _get_model():
                     _tts_model = ChatterboxTTS.from_pretrained(device=device)
                     
                     # Apply torch.compile for faster inference (PyTorch 2.0+)
-                    try:
-                        if hasattr(torch, 'compile') and device == "cuda":
-                            print("[TTS] Applying torch.compile optimization...")
-                            _tts_model.model = torch.compile(_tts_model.model, mode="reduce-overhead")
-                    except Exception as compile_err:
-                        print(f"[TTS] torch.compile failed (continuing without): {compile_err}")
+                    if hasattr(torch, "compile") and device == "cuda":
+                        compile_target_attr = next(
+                            (attr for attr in ("model", "tts", "net") if hasattr(_tts_model, attr)),
+                            None,
+                        )
+                        if compile_target_attr is not None:
+                            try:
+                                print(f"[TTS] Applying torch.compile optimization on '{compile_target_attr}'...")
+                                module = getattr(_tts_model, compile_target_attr)
+                                setattr(_tts_model, compile_target_attr, torch.compile(module, mode="reduce-overhead"))
+                            except Exception as compile_err:
+                                print(f"[TTS] torch.compile skipped (continuing without): {compile_err}")
+                        else:
+                            print("[TTS] torch.compile not applied: no compile-ready module found on ChatterboxTTS wrapper")
                     
                     print(f"[TTS] Chatterbox model ready on {device.upper()}.")
                 except Exception as exc:
