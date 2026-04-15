@@ -27,29 +27,48 @@
         <main>
             <div class="controls-section">
                 <h2>Chat Controls</h2>
-                
-                <div class="control-group">
-                    <label for="channelInput">Channel Name:</label>
-                    <input type="text" id="channelInput" placeholder="Enter channel name..." 
-                           value="<%= currentChannel %>" <%= !isAuthenticated ? 'disabled' : '' %>>
-                </div>
-                
-                <div class="button-group">
-                    <button id="startBtn" class="btn btn-success" <%= !isAuthenticated ? 'disabled' : '' %>>
-                        Start Monitoring
-                    </button>
-                    <button id="stopBtn" class="btn btn-danger" <%= !isAuthenticated ? 'disabled' : '' %> style="display: none;">
-                        Stop Monitoring
-                    </button>
-                    <button id="statusBtn" class="btn btn-info" <%= !isAuthenticated ? 'disabled' : '' %>>Check Status</button>
+                <div class="chat-controls-grid">
+                    <div class="control-group channel-control-group">
+                        <label for="channelInput">Channel Name:</label>
+                        <input type="text" id="channelInput" class="form-input" placeholder="Enter channel name..." 
+                               value="<%= currentChannel %>" <%= !isAuthenticated ? 'disabled' : '' %>>
+                    </div>
+
+                    <div class="monitor-actions-panel">
+                        <div class="button-group monitor-button-group">
+                            <button id="startBtn" class="btn btn-success" <%= !isAuthenticated ? 'disabled' : '' %>>
+                                Start Monitoring
+                            </button>
+                            <button id="stopBtn" class="btn btn-danger" <%= !isAuthenticated ? 'disabled' : '' %> style="display: none;">
+                                Stop Monitoring
+                            </button>
+                            <button id="statusBtn" class="btn btn-info" <%= !isAuthenticated ? 'disabled' : '' %>>Check Status</button>
+                        </div>
+
+                        <div id="statusDisplay" class="status-display compact-status-display">
+                            <% if (chatMonitoring) { %>
+                                <span class="status-indicator monitoring">🟢 Monitoring: <%= currentChannel %></span>
+                            <% } else { %>
+                                <span class="status-indicator stopped">🔴 Not Monitoring</span>
+                            <% } %>
+                        </div>
+                    </div>
                 </div>
 
-                <div id="statusDisplay" class="status-display">
-                    <% if (chatMonitoring) { %>
-                        <span class="status-indicator monitoring">🟢 Monitoring: <%= currentChannel %></span>
-                    <% } else { %>
-                        <span class="status-indicator stopped">🔴 Not Monitoring</span>
-                    <% } %>
+                <div class="chat-section chat-section-inline">
+                    <h2>💬 Live Chat Messages</h2>
+                    <div class="chat-stats">
+                        <span id="messageCount">Messages: 0</span>
+                        <span id="ttsCount">TTS Spoken: 0</span>
+                        <span id="replayCount" style="display: none;">Manual Replays: 0</span>
+                        <span id="manualQueueCount">Manual Queue: 0</span>
+                        <span id="currentModeStat">Mode: autoplay</span>
+                        <span id="currentTriggerModeStat">Trigger: chat_commands</span>
+                        <span id="lastUpdate">Last Update: Never</span>
+                    </div>
+                    <div id="liveChatMessages" class="chat-container">
+                        <div class="no-messages">💬 Live chat messages will appear here...</div>
+                    </div>
                 </div>
             
             <div class="debug-buttons" style="display: none;">
@@ -66,19 +85,26 @@
 
             <div class="tts-controls">
                 <h3>🔊 Text-to-Speech Controls</h3>
-                <div class="control-group">
-                    <label>
-                        <input type="checkbox" id="ttsEnabled" checked> Enable Text-to-Speech
-                    </label>
-                    <label>
-                        <input type="checkbox" id="ttsMuted"> Mute Immediately
-                    </label>
-                    <label>
-                        TTS Speed: <input type="range" id="ttsSpeed" min="0.5" max="2" step="0.1" value="1">
-                        <span id="speedValue">1.0</span>
-                    </label>
-                    <label>
-                        Volume: <input type="range" id="ttsVolume" min="0" max="100" step="1" value="80">
+                <div class="toggle-control-list tts-toggle-group">
+                    <div class="toggle-control-card">
+                        <div class="toggle-copy">
+                            <span class="toggle-title">Text to Speech</span>
+                            <span class="toggle-description">Read eligible chat messages out loud.</span>
+                        </div>
+                        <button id="ttsEnabled" class="btn toggle-state-btn is-on" type="button" data-enabled="true" aria-pressed="true">Enabled</button>
+                    </div>
+                    <div class="toggle-control-card">
+                        <div class="toggle-copy">
+                            <span class="toggle-title">Mute</span>
+                            <span class="toggle-description">Cut off audio output immediately when enabled.</span>
+                        </div>
+                        <button id="ttsMuted" class="btn toggle-state-btn is-off" type="button" data-enabled="false" aria-pressed="false">Mute</button>
+                    </div>
+                </div>
+                <div class="tts-compact-grid">
+                    <label class="tts-slider-card">
+                        <span class="tts-label-title">Volume</span>
+                        <input type="range" id="ttsVolume" min="0" max="100" step="1" value="80">
                         <span id="volumeValue">80%</span>
                     </label>
                 </div>
@@ -110,7 +136,7 @@
                 <div class="tts-mode-grid">
                     <label for="ttsTriggerModeSelect">
                         Trigger Mode:
-                        <select id="ttsTriggerModeSelect" <%= !isAuthenticated ? 'disabled' : '' %>>
+                        <select id="ttsTriggerModeSelect" class="panel-select" <%= !isAuthenticated ? 'disabled' : '' %>>
                             <option value="chat_commands" selected>Chat Commands Only</option>
                             <option value="channel_points">Channel Points Only</option>
                             <option value="both">Chat Commands + Channel Points</option>
@@ -118,7 +144,7 @@
                     </label>
                     <label for="channelPointsRewardTitleInput">
                         Channel Point Reward Title:
-                        <input type="text" id="channelPointsRewardTitleInput" value="Test-tts" placeholder="Test-tts" <%= !isAuthenticated ? 'disabled' : '' %>>
+                        <input type="text" id="channelPointsRewardTitleInput" class="form-input" value="Test-tts" placeholder="Test-tts" <%= !isAuthenticated ? 'disabled' : '' %>>
                     </label>
                 </div>
                 <div class="button-group tts-playback-actions">
@@ -139,19 +165,27 @@
             <div class="moderation-controls">
                 <h3>🛡️ Moderation & Permissions</h3>
                 
-                <div class="control-group">
-                    <label>
-                        <input type="checkbox" id="enableBanList" checked> Enable Ban List
-                    </label>
-                    <label>
-                        <input type="checkbox" id="enablePermissionFilter"> Enable Permission Filter
-                    </label>
+                <div class="toggle-control-list">
+                    <div class="toggle-control-card">
+                        <div class="toggle-copy">
+                            <span class="toggle-title">Ban List</span>
+                            <span class="toggle-description">Ignore messages from blocked users.</span>
+                        </div>
+                        <button id="enableBanList" class="btn toggle-state-btn is-on" type="button" data-enabled="true" aria-pressed="true">Enabled</button>
+                    </div>
+                    <div class="toggle-control-card">
+                        <div class="toggle-copy">
+                            <span class="toggle-title">Permission Filter</span>
+                            <span class="toggle-description">Only read messages from the selected audience.</span>
+                        </div>
+                        <button id="enablePermissionFilter" class="btn toggle-state-btn is-off" type="button" data-enabled="false" aria-pressed="false">Disabled</button>
+                    </div>
                 </div>
                 
-                <div class="control-group">
+                <div class="tts-mode-grid moderation-mode-grid">
                     <label for="permissionModeSelect">
                         Permission Mode:
-                        <select id="permissionModeSelect">
+                        <select id="permissionModeSelect" class="panel-select">
                             <option value="all" selected>All Users</option>
                             <option value="subscribers_only">Subscribers Only</option>
                             <option value="moderators_only">Moderators Only</option>
@@ -177,21 +211,6 @@
                 </div>
             </div>
 
-            <div class="chat-section">
-                <h2>💬 Live Chat Messages</h2>
-                <div class="chat-stats">
-                    <span id="messageCount">Messages: 0</span>
-                    <span id="ttsCount">TTS Spoken: 0</span>
-                    <span id="replayCount" style="display: none;">Manual Replays: 0</span>
-                    <span id="manualQueueCount">Manual Queue: 0</span>
-                    <span id="currentModeStat">Mode: autoplay</span>
-                    <span id="currentTriggerModeStat">Trigger: chat_commands</span>
-                    <span id="lastUpdate">Last Update: Never</span>
-                </div>
-                <div id="liveChatMessages" class="chat-container">
-                    <div class="no-messages">💬 Live chat messages will appear here...</div>
-                </div>
-            </div>
         </main>
 
         <footer>
@@ -228,6 +247,8 @@
         </div>
     </aside>
 
+    <div id="bgCubesLayer" aria-hidden="true"></div>
+    <script src="/js/bg-cubes.js"></script>
     <script src="/js/main.js"></script>
 </body>
 </html>

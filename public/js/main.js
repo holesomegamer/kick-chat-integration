@@ -123,6 +123,57 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function getToggleButtonState(buttonOrId, fallback = false) {
+    const button = typeof buttonOrId === 'string'
+        ? document.getElementById(buttonOrId)
+        : buttonOrId;
+
+    if (!button) {
+        return fallback;
+    }
+
+    return button.dataset.enabled === 'true';
+}
+
+function setToggleButtonState(buttonOrId, enabled, options = {}) {
+    const button = typeof buttonOrId === 'string'
+        ? document.getElementById(buttonOrId)
+        : buttonOrId;
+
+    if (!button) {
+        return;
+    }
+
+    const onText = options.onText || 'Enabled';
+    const offText = options.offText || 'Disabled';
+    const nextState = Boolean(enabled);
+
+    button.dataset.enabled = String(nextState);
+    button.setAttribute('aria-pressed', nextState ? 'true' : 'false');
+    button.classList.toggle('is-on', nextState);
+    button.classList.toggle('is-off', !nextState);
+    button.textContent = nextState ? onText : offText;
+}
+
+function syncToggleButtons() {
+    setToggleButtonState('ttsEnabled', getToggleButtonState('ttsEnabled', true), {
+        onText: 'Enabled',
+        offText: 'Disabled'
+    });
+    setToggleButtonState('ttsMuted', getToggleButtonState('ttsMuted', false), {
+        onText: 'Mute',
+        offText: 'Mute'
+    });
+    setToggleButtonState('enableBanList', moderationSettings.enableBanList, {
+        onText: 'Enabled',
+        offText: 'Disabled'
+    });
+    setToggleButtonState('enablePermissionFilter', moderationSettings.enablePermissionFilter, {
+        onText: 'Enabled',
+        offText: 'Disabled'
+    });
+}
+
 function formatTimestamp(timestamp) {
     try {
         const date = new Date(timestamp);
@@ -284,8 +335,14 @@ async function unbanUser(username) {
 }
 
 function updateModerationUI() {
-    if (enableBanListCheckbox) enableBanListCheckbox.checked = moderationSettings.enableBanList;
-    if (enablePermissionFilterCheckbox) enablePermissionFilterCheckbox.checked = moderationSettings.enablePermissionFilter;
+    setToggleButtonState(enableBanListCheckbox, moderationSettings.enableBanList, {
+        onText: 'Enabled',
+        offText: 'Disabled'
+    });
+    setToggleButtonState(enablePermissionFilterCheckbox, moderationSettings.enablePermissionFilter, {
+        onText: 'Enabled',
+        offText: 'Disabled'
+    });
     if (permissionModeSelect) permissionModeSelect.value = moderationSettings.permissionMode;
     updateBanListDisplay();
 }
@@ -774,7 +831,7 @@ async function playProviderVoiceAudio(text, voice) {
 
     return new Promise((resolve, reject) => {
         const audio = new Audio(audioUrl);
-        const mutedNow = document.getElementById('ttsMuted')?.checked === true;
+        const mutedNow = getToggleButtonState('ttsMuted', false);
         const volumeSliderValue = parseInt(document.getElementById('ttsVolume')?.value || '80', 10);
         const normalizedVolume = Math.max(0, Math.min(1, volumeSliderValue / 100));
 
@@ -828,7 +885,7 @@ function applyCurrentProviderAudioVolume() {
         return;
     }
 
-    const mutedNow = document.getElementById('ttsMuted')?.checked === true;
+    const mutedNow = getToggleButtonState('ttsMuted', false);
     const volumeSliderValue = parseInt(document.getElementById('ttsVolume')?.value || '80', 10);
     const normalizedVolume = Math.max(0, Math.min(1, volumeSliderValue / 100));
     activeProviderAudio.volume = mutedNow ? 0 : normalizedVolume;
@@ -836,9 +893,8 @@ function applyCurrentProviderAudioVolume() {
 
 // TTS Functions
 function speakText(text, username, voice = 'default', forceReplay = false, onComplete = null, playbackContext = 'auto') {
-    const ttsEnabled = document.getElementById('ttsEnabled')?.checked;
-    const ttsMuted = document.getElementById('ttsMuted')?.checked;
-    const ttsSpeed = parseFloat(document.getElementById('ttsSpeed')?.value || 1);
+    const ttsEnabled = getToggleButtonState('ttsEnabled', true);
+    const ttsMuted = getToggleButtonState('ttsMuted', false);
     const modeMultiplier = getPlaybackSpeedMultiplier(playbackContext);
     const ttsVolume = parseInt(document.getElementById('ttsVolume')?.value || '80', 10);
     
@@ -909,7 +965,7 @@ function speakText(text, username, voice = 'default', forceReplay = false, onCom
     }
 
     const voiceProfile = getVoiceProfile(voice);
-    const adjustedRate = Math.max(0.5, Math.min(2, ttsSpeed * modeMultiplier * voiceProfile.rateMultiplier));
+    const adjustedRate = Math.max(0.5, Math.min(2, modeMultiplier * voiceProfile.rateMultiplier));
     
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.rate = adjustedRate;
@@ -962,8 +1018,6 @@ function processNextInTTSQueue() {
 function setupTTSControls() {
     const ttsEnabledCheckbox = document.getElementById('ttsEnabled');
     const ttsMutedCheckbox = document.getElementById('ttsMuted');
-    const ttsSpeedSlider = document.getElementById('ttsSpeed');
-    const speedValueSpan = document.getElementById('speedValue');
     const ttsVolumeSlider = document.getElementById('ttsVolume');
     const volumeValueSpan = document.getElementById('volumeValue');
     const ttsModeSelect = document.getElementById('ttsModeSelect');
@@ -982,26 +1036,42 @@ function setupTTSControls() {
     const replayLastBtn = document.getElementById('replayLastBtn');
 
     if (ttsEnabledCheckbox) {
-        ttsEnabledCheckbox.addEventListener('change', function() {
-            if (!this.checked) {
+        setToggleButtonState(ttsEnabledCheckbox, getToggleButtonState(ttsEnabledCheckbox, true), {
+            onText: 'Enabled',
+            offText: 'Disabled'
+        });
+
+        ttsEnabledCheckbox.addEventListener('click', function() {
+            const nextState = !getToggleButtonState(this, true);
+            setToggleButtonState(this, nextState, {
+                onText: 'Enabled',
+                offText: 'Disabled'
+            });
+
+            if (!nextState) {
                 stopTTSImmediately();
             }
         });
     }
 
     if (ttsMutedCheckbox) {
-        ttsMutedCheckbox.addEventListener('change', function() {
-            if (this.checked) {
+        setToggleButtonState(ttsMutedCheckbox, getToggleButtonState(ttsMutedCheckbox, false), {
+            onText: 'Mute',
+            offText: 'Mute'
+        });
+
+        ttsMutedCheckbox.addEventListener('click', function() {
+            const nextState = !getToggleButtonState(this, false);
+            setToggleButtonState(this, nextState, {
+                onText: 'Mute',
+                offText: 'Mute'
+            });
+
+            if (nextState) {
                 stopTTSImmediately();
             } else {
                 applyCurrentProviderAudioVolume();
             }
-        });
-    }
-    
-    if (ttsSpeedSlider && speedValueSpan) {
-        ttsSpeedSlider.addEventListener('input', function() {
-            speedValueSpan.textContent = `${this.value}x`;
         });
     }
 
@@ -1090,6 +1160,7 @@ function setupTTSControls() {
         });
     }
 
+    syncToggleButtons();
     updateModeDescription();
     updateTriggerModeDescription();
     updatePlaybackControlState();
@@ -1596,14 +1667,22 @@ function setupEventListeners() {
     
     // Moderation event listeners
     if (enableBanListCheckbox) {
-        enableBanListCheckbox.addEventListener('change', function() {
-            moderationSettings.enableBanList = this.checked;
+        enableBanListCheckbox.addEventListener('click', function() {
+            moderationSettings.enableBanList = !moderationSettings.enableBanList;
+            setToggleButtonState(this, moderationSettings.enableBanList, {
+                onText: 'Enabled',
+                offText: 'Disabled'
+            });
         });
     }
     
     if (enablePermissionFilterCheckbox) {
-        enablePermissionFilterCheckbox.addEventListener('change', function() {
-            moderationSettings.enablePermissionFilter = this.checked;
+        enablePermissionFilterCheckbox.addEventListener('click', function() {
+            moderationSettings.enablePermissionFilter = !moderationSettings.enablePermissionFilter;
+            setToggleButtonState(this, moderationSettings.enablePermissionFilter, {
+                onText: 'Enabled',
+                offText: 'Disabled'
+            });
         });
     }
     
@@ -1674,6 +1753,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (ttsSpeedHybrid) {
         modeSpeedMultipliers.hybrid = parseFloat(ttsSpeedHybrid.value || '1');
     }
+    syncToggleButtons();
     
     checkAuthenticationStatus();
     setupEventListeners();
@@ -1689,6 +1769,88 @@ document.addEventListener('DOMContentLoaded', function() {
         currentChannel = channelInput.value.trim();
     }
 });
+
+// ── Background floating cubes ──────────────────────────────────────────────
+(function initBgCubes() {
+    const FACE_TRANSFORMS = [
+        ['front',  (h) => `translateZ(${h}px)`],
+        ['back',   (h) => `rotateY(180deg) translateZ(${h}px)`],
+        ['right',  (h) => `rotateY(90deg) translateZ(${h}px)`],
+        ['left',   (h) => `rotateY(-90deg) translateZ(${h}px)`],
+        ['top',    (h) => `rotateX(90deg) translateZ(${h}px)`],
+        ['bottom', (h) => `rotateX(-90deg) translateZ(${h}px)`],
+    ];
+
+    function spawnBgCube() {
+        const layer = document.getElementById('bgCubesLayer');
+        if (!layer) return;
+
+        const size     = 18 + Math.random() * 28;          // 18–46 px
+        const half     = size / 2;
+        const spin     = (2 + Math.random() * 4).toFixed(2); // 2–6 s
+        const life     = (8 + Math.random() * 10).toFixed(2); // 8–18 s
+        const peak     = (0.05 + Math.random() * 0.09).toFixed(3); // 0.05–0.14
+        // Spawn only on left or right band (outer 18 % of each side)
+        const sideWidth = window.innerWidth * 0.18;
+        const onLeft    = Math.random() < 0.5;
+        const startX    = onLeft
+            ? Math.random() * sideWidth
+            : window.innerWidth - Math.random() * sideWidth;
+        const startY    = Math.random() * window.innerHeight;
+        // Drift stays mostly within its starting band
+        const dx        = (onLeft ? 1 : -1) * (20 + Math.random() * 80).toFixed(1);
+        const dy        = ((Math.random() - 0.5) * 200).toFixed(1);
+        const scaleMax  = (1.0 + Math.random() * 1.0).toFixed(2);  // 1.0 – 2.0
+        const scaleMid  = (0.5 + Math.random() * 0.4).toFixed(2);  // 0.5 – 0.9
+        const scaleStart = (0.2 + Math.random() * 0.3).toFixed(2); // 0.2 – 0.5
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'bg-cube-wrapper';
+        wrapper.style.cssText = [
+            `left:${startX}px`, `top:${startY}px`,
+            `width:${size}px`, `height:${size}px`,
+            `--life:${life}s`, `--spin:${spin}s`,
+            `--peak:${peak}`, `--dx:${dx}px`, `--dy:${dy}px`,
+            `--scale-max:${scaleMax}`, `--scale-mid:${scaleMid}`, `--scale-start:${scaleStart}`,
+        ].join(';');
+
+        const inner = document.createElement('div');
+        inner.className = 'bg-cube-inner';
+        inner.style.cssText = `width:${size}px;height:${size}px`;
+
+        FACE_TRANSFORMS.forEach(([name, tfn]) => {
+            const face = document.createElement('span');
+            face.className = 'bg-cube-face';
+            face.style.cssText = `width:${size}px;height:${size}px;transform:${tfn(half)}`;
+            inner.appendChild(face);
+        });
+
+        wrapper.appendChild(inner);
+        layer.appendChild(wrapper);
+
+        setTimeout(() => wrapper.remove(), (parseFloat(life) + 0.5) * 1000);
+    }
+
+    function scheduleBgCube() {
+        const delay = 1250 + Math.random() * 3250; // 1.25–4.5 s between spawns (2× rate)
+        setTimeout(() => {
+            spawnBgCube();
+            scheduleBgCube();
+        }, delay);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        // Seed two independent spawn chains so density doubles immediately
+        setTimeout(() => {
+            spawnBgCube();
+            scheduleBgCube();
+        }, 600);
+        setTimeout(() => {
+            spawnBgCube();
+            scheduleBgCube();
+        }, 1800);
+    });
+}());
 
 // Socket.IO event handlers
 socket.on('connect', function() {
