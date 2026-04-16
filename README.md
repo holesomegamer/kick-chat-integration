@@ -96,7 +96,13 @@ If either command fails, install Python 3.11 from python.org and rerun the check
 1. Go to [Kick.com Developer Console](https://kick.com/developer/applications)
 2. Create a new application
 3. Set the redirect URI to: `http://localhost:3000/auth/callback`
-4. Copy the Client ID and Client Secret (you'll need these in the next step)
+4. **Enable the following scopes (checkboxes):**
+   - ✅ Read user information (including email address) - *default*
+   - ✅ Read Channel points rewards information on a channel
+   - ✅ Read, add, edit and delete Channel points rewards on a channel
+   - ✅ Write to Chat feed
+   - ✅ Subscribe to events (read chat feed, follows, subscribes, gifts)
+5. Save the application and copy the Client ID and Client Secret (you'll need these in the next step)
 
 ### 3. Environment Variables
 
