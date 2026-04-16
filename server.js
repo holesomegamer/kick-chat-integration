@@ -36,6 +36,7 @@ app.use(cors());
 app.use(bodyParser.json({ verify: captureRawBody }));
 app.use(bodyParser.urlencoded({ extended: true, verify: captureRawBody }));
 app.use(express.static('public'));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(session({
     secret: process.env.SESSION_SECRET || 'kick-chat-secret-key',
     resave: false,
@@ -46,7 +47,13 @@ app.use(session({
 // Configure multer for file uploads
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const uploadDir = path.join(__dirname, 'uploads', 'voice-samples');
+        let uploadDir;
+        if (file.fieldname === 'voiceImage') {
+            uploadDir = path.join(__dirname, 'uploads', 'voice-images');
+        } else {
+            uploadDir = path.join(__dirname, 'uploads', 'voice-samples');
+        }
+        
         if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
         }
@@ -65,11 +72,22 @@ const upload = multer({
         fileSize: 50 * 1024 * 1024 // 50MB limit
     },
     fileFilter: (req, file, cb) => {
-        const allowedTypes = /\.(mp3|wav|m4a|ogg|flac)$/i;
-        if (allowedTypes.test(file.originalname)) {
-            cb(null, true);
+        if (file.fieldname === 'sampleFile') {
+            const allowedAudioTypes = /\.(mp3|wav|m4a|ogg|flac)$/i;
+            if (allowedAudioTypes.test(file.originalname)) {
+                cb(null, true);
+            } else {
+                cb(new Error('Only audio files are allowed for samples (mp3, wav, m4a, ogg, flac)'));
+            }
+        } else if (file.fieldname === 'voiceImage') {
+            const allowedImageTypes = /\.(jpg|jpeg|png|gif|webp)$/i;
+            if (allowedImageTypes.test(file.originalname)) {
+                cb(null, true);
+            } else {
+                cb(new Error('Only image files are allowed for avatars (jpg, jpeg, png, gif, webp)'));
+            }
         } else {
-            cb(new Error('Only audio files are allowed (mp3, wav, m4a, ogg, flac)'));
+            cb(new Error('Unknown field name'));
         }
     }
 });
@@ -85,6 +103,12 @@ let connectedClients = [];
 let chatHistory = [];
 const CHAT_ROUTE_DEBUG_LOGS = process.env.CHAT_DEBUG_LOGS === '1';
 const CHAT_CACHE_TTL_MS = 10 * 60 * 1000;
+
+// Ensure data directory exists
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+}
 // Cache for user lookups to avoid repeated API calls
 const userLookupCache = new Map();
 const USER_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
@@ -218,6 +242,88 @@ let moderationSettings = {
     enableBanList: true,
     enablePermissionFilter: false
 };
+
+// Settings persistence functions
+function loadTtsSettings() {
+    const settingsPath = path.join(__dirname, 'data', 'tts-settings.json');
+    try {
+        if (fs.existsSync(settingsPath)) {
+            const settingsData = fs.readFileSync(settingsPath, 'utf8');
+            const loadedSettings = JSON.parse(settingsData);
+            
+            // Merge with defaults, preserving any new fields
+            ttsTriggerSettings = {
+                ...ttsTriggerSettings,
+                ...loadedSettings
+            };
+            
+            console.log('✅ TTS settings loaded from file');
+        }
+    } catch (error) {
+        console.error('❌ Failed to load TTS settings:', error.message);
+    }
+}
+
+function saveTtsSettings() {
+    const settingsPath = path.join(__dirname, 'data', 'tts-settings.json');
+    try {
+        // Only save the persistent settings, not runtime state
+        const persistentSettings = {
+            mode: ttsTriggerSettings.mode,
+            channelPointsRewardTitle: ttsTriggerSettings.channelPointsRewardTitle
+        };
+        
+        fs.writeFileSync(settingsPath, JSON.stringify(persistentSettings, null, 2), 'utf8');
+        console.log('✅ TTS settings saved to file');
+    } catch (error) {
+        console.error('❌ Failed to save TTS settings:', error.message);
+    }
+}
+
+function loadModerationSettingsFromFile() {
+    const settingsPath = path.join(__dirname, 'data', 'moderation-settings.json');
+    try {
+        if (fs.existsSync(settingsPath)) {
+            const settingsData = fs.readFileSync(settingsPath, 'utf8');
+            const loadedSettings = JSON.parse(settingsData);
+            
+            // Restore settings with proper data types
+            if (loadedSettings.permissionMode) {
+                moderationSettings.permissionMode = loadedSettings.permissionMode;
+            }
+            if (typeof loadedSettings.enableBanList === 'boolean') {
+                moderationSettings.enableBanList = loadedSettings.enableBanList;
+            }
+            if (typeof loadedSettings.enablePermissionFilter === 'boolean') {
+                moderationSettings.enablePermissionFilter = loadedSettings.enablePermissionFilter;
+            }
+            if (Array.isArray(loadedSettings.banList)) {
+                moderationSettings.banList = new Set(loadedSettings.banList);
+            }
+            
+            console.log('✅ Moderation settings loaded from file');
+        }
+    } catch (error) {
+        console.error('❌ Failed to load moderation settings:', error.message);
+    }
+}
+
+function saveModerationSettingsToFile() {
+    const settingsPath = path.join(__dirname, 'data', 'moderation-settings.json');
+    try {
+        const persistentSettings = {
+            permissionMode: moderationSettings.permissionMode,
+            enableBanList: moderationSettings.enableBanList,
+            enablePermissionFilter: moderationSettings.enablePermissionFilter,
+            banList: Array.from(moderationSettings.banList)
+        };
+        
+        fs.writeFileSync(settingsPath, JSON.stringify(persistentSettings, null, 2), 'utf8');
+        console.log('✅ Moderation settings saved to file');
+    } catch (error) {
+        console.error('❌ Failed to save moderation settings:', error.message);
+    }
+}
 
 // Track logged ban messages to avoid spam
 const loggedBannedUsers = new Set();
@@ -1161,6 +1267,9 @@ app.post('/api/tts/settings', (req, res) => {
 
     ttsTriggerSettings.mode = requestedMode;
     ttsTriggerSettings.channelPointsRewardTitle = requestedRewardTitle || 'Test-tts';
+    
+    // Save to file for persistence
+    saveTtsSettings();
 
     res.json({
         success: true,
@@ -1196,6 +1305,9 @@ app.post('/api/moderation/settings', (req, res) => {
     if (typeof enableBanList === 'boolean') moderationSettings.enableBanList = enableBanList;
     if (typeof enablePermissionFilter === 'boolean') moderationSettings.enablePermissionFilter = enablePermissionFilter;
     
+    // Save to file for persistence
+    saveModerationSettingsToFile();
+    
     res.json({
         success: true,
         settings: {
@@ -1219,6 +1331,9 @@ app.post('/api/moderation/ban', (req, res) => {
     const normalizedUsername = normalizeComparableText(username);
     moderationSettings.banList.add(normalizedUsername);
     
+    // Save to file for persistence
+    saveModerationSettingsToFile();
+    
     console.log(`🚫 Added user to ban list: ${username}`);
     
     res.json({
@@ -1239,6 +1354,9 @@ app.delete('/api/moderation/ban/:username', (req, res) => {
     
     const normalizedUsername = normalizeComparableText(username);
     const wasRemoved = moderationSettings.banList.delete(normalizedUsername);
+    
+    // Save to file for persistence
+    saveModerationSettingsToFile();
     
     if (wasRemoved) {
         console.log(`✅ Removed user from ban list: ${username}`);
@@ -1378,10 +1496,11 @@ app.post('/api/voices', upload.any(), async (req, res) => {
     try {
         const { name, tag } = req.body;
         
-        // Find the uploaded file
-        const file = req.files?.find(f => f.fieldname === 'sampleFile');
+        // Find the uploaded files
+        const audioFile = req.files?.find(f => f.fieldname === 'sampleFile');
+        const imageFile = req.files?.find(f => f.fieldname === 'voiceImage');
         
-        if (!file) {
+        if (!audioFile) {
             return res.status(400).json({ success: false, error: 'No voice file uploaded' });
         }
         
@@ -1389,14 +1508,7 @@ app.post('/api/voices', upload.any(), async (req, res) => {
             return res.status(400).json({ success: false, error: 'Name and tag are required' });
         }
         
-        // Create voice clone
-        const result = await voiceCloning.createVoiceClone({
-            name: name,
-            tag: tag,
-            samplePath: file.path
-        });
-        
-        // Save to voices.json
+        // Load existing voices to check for tag conflicts
         const voicesPath = path.join(__dirname, 'data', 'voices.json');
         let voices = [];
         
@@ -1405,13 +1517,33 @@ app.post('/api/voices', upload.any(), async (req, res) => {
             voices = JSON.parse(voicesData);
         }
         
+        // Check if tag already exists in current voices
+        const existingVoice = voices.find(v => v.tag.toLowerCase() === tag.toLowerCase());
+        if (existingVoice) {
+            return res.status(409).json({ 
+                success: false, 
+                error: `Tag '${tag}' is already in use by voice '${existingVoice.name}'` 
+            });
+        }
+        
+        // Create voice clone
+        const result = await voiceCloning.createVoiceClone({
+            name: name,
+            tag: tag,
+            samplePath: audioFile.path
+        });
+        
+        // Add new voice to existing voices array
         const newVoice = {
             id: result.id || crypto.randomUUID(),
             name: name,
             tag: tag,
-            samplePath: file.path,
-            sampleFileName: file.filename,
-            originalFileName: file.originalname,
+            samplePath: audioFile.path,
+            sampleFileName: audioFile.filename,
+            originalFileName: audioFile.originalname,
+            imagePath: imageFile ? imageFile.path : null,
+            imageFileName: imageFile ? imageFile.filename : null,
+            originalImageName: imageFile ? imageFile.originalname : null,
             status: result.status || 'ready',
             progress: result.progress || 100,
             provider: result.provider || 'local',
@@ -1425,7 +1557,7 @@ app.post('/api/voices', upload.any(), async (req, res) => {
         
         voices.unshift(newVoice);
         
-        fs.writeFileSync(voicesPath, JSON.stringify(voices, null, 2));
+        fs.writeFileSync(voicesPath, JSON.stringify(voices, null, 2), 'utf8');
         
         res.json({ success: true, voice: newVoice, result: result });
     } catch (error) {
@@ -1456,7 +1588,7 @@ app.post('/api/voices', upload.any(), async (req, res) => {
     }
 });
 
-app.delete('/api/voices/:id', (req, res) => {
+app.delete('/api/voices/:id', async (req, res) => {
     try {
         const voiceId = req.params.id;
         const voicesPath = path.join(__dirname, 'data', 'voices.json');
@@ -1475,16 +1607,40 @@ app.delete('/api/voices/:id', (req, res) => {
         
         const voice = voices[voiceIndex];
         
+        // Delete the voice from the TTS service first
+        try {
+            const deleteResult = await voiceCloning.deleteVoiceClone({
+                tag: voice.tag,
+                externalVoiceId: voice.externalVoiceId,
+                provider: voice.provider || 'local'
+            });
+            
+            if (!deleteResult.success) {
+                console.warn(`Warning: Failed to delete voice from TTS service: ${deleteResult.error}`);
+                // Continue with local deletion even if TTS service deletion fails
+            } else {
+                console.log(`✅ Voice deleted from TTS service: ${deleteResult.message}`);
+            }
+        } catch (error) {
+            console.warn(`Warning: Error deleting voice from TTS service: ${error.message}`);
+            // Continue with local deletion even if TTS service deletion fails
+        }
+        
         // Delete the voice file if it exists
         if (voice.samplePath && fs.existsSync(voice.samplePath)) {
             fs.unlinkSync(voice.samplePath);
+        }
+        
+        // Delete the image file if it exists
+        if (voice.imagePath && fs.existsSync(voice.imagePath)) {
+            fs.unlinkSync(voice.imagePath);
         }
         
         // Remove from array
         voices.splice(voiceIndex, 1);
         
         // Save updated array
-        fs.writeFileSync(voicesPath, JSON.stringify(voices, null, 2));
+        fs.writeFileSync(voicesPath, JSON.stringify(voices, null, 2), 'utf8');
         
         res.json({ success: true, message: 'Voice deleted successfully' });
     } catch (error) {
@@ -1952,4 +2108,9 @@ server.listen(PORT, () => {
     console.log('1. Set up your .env file with Kick.com OAuth credentials');
     console.log('2. Run ngrok to expose your webhook endpoint');
     console.log('3. Configure your Kick.com app with the correct redirect URI');
+    
+    // Load persistent settings on startup
+    console.log('📄 Loading persistent settings...');
+    loadTtsSettings();
+    loadModerationSettingsFromFile();
 });

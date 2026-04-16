@@ -204,8 +204,114 @@ async function synthesizeWithLocalProvider({ externalVoiceId, text, voiceTag }) 
     };
 }
 
+async function deleteVoiceClone({ tag, externalVoiceId, provider }) {
+    if (provider === 'local') {
+        return deleteLocalVoiceClone({ tag, externalVoiceId });
+    }
+
+    if (provider === 'elevenlabs') {
+        return deleteElevenLabsVoice({ externalVoiceId });
+    }
+
+    // For mock provider, just return success
+    return { success: true, provider: 'mock' };
+}
+
+async function deleteLocalVoiceClone({ tag, externalVoiceId }) {
+    try {
+        const localBaseUrl = getLocalTTSBaseUrl();
+        
+        // Try deleting by voice_id first, then by tag as fallback
+        const deleteUrl = externalVoiceId 
+            ? `${localBaseUrl}/voices/${encodeURIComponent(externalVoiceId)}`
+            : `${localBaseUrl}/voices/tag/${encodeURIComponent(tag)}`;
+
+        const response = await axios.delete(deleteUrl, {
+            timeout: 10000
+        });
+
+        return {
+            success: true,
+            provider: 'local',
+            message: 'Voice deleted from local TTS service'
+        };
+    } catch (error) {
+        // If the voice doesn't exist in the service, that's okay
+        if (error.response && error.response.status === 404) {
+            return {
+                success: true,
+                provider: 'local',
+                message: 'Voice was not found in local TTS service (may have already been deleted)'
+            };
+        }
+
+        // If the endpoint doesn't exist (405/501), the TTS service might not support deletion yet
+        if (error.response && (error.response.status === 405 || error.response.status === 501)) {
+            return {
+                success: false,
+                provider: 'local',
+                error: 'Local TTS service does not support voice deletion yet'
+            };
+        }
+
+        // Log the error but don't fail the entire deletion
+        console.warn(`Failed to delete voice from local TTS service: ${error.message}`);
+        return {
+            success: false,
+            provider: 'local',
+            error: error.message
+        };
+    }
+}
+
+async function deleteElevenLabsVoice({ externalVoiceId }) {
+    try {
+        const apiKey = process.env.ELEVENLABS_API_KEY;
+        if (!apiKey) {
+            return {
+                success: false,
+                provider: 'elevenlabs',
+                error: 'ELEVENLABS_API_KEY not configured'
+            };
+        }
+
+        const response = await axios.delete(
+            `https://api.elevenlabs.io/v1/voices/${externalVoiceId}`,
+            {
+                headers: {
+                    'xi-api-key': apiKey
+                },
+                timeout: 10000
+            }
+        );
+
+        return {
+            success: true,
+            provider: 'elevenlabs',
+            message: 'Voice deleted from ElevenLabs'
+        };
+    } catch (error) {
+        // If the voice doesn't exist, that's okay
+        if (error.response && error.response.status === 404) {
+            return {
+                success: true,
+                provider: 'elevenlabs',
+                message: 'Voice was not found in ElevenLabs (may have already been deleted)'
+            };
+        }
+
+        console.warn(`Failed to delete voice from ElevenLabs: ${error.message}`);
+        return {
+            success: false,
+            provider: 'elevenlabs',
+            error: error.message
+        };
+    }
+}
+
 module.exports = {
     createVoiceClone,
+    deleteVoiceClone,
     synthesizeVoiceText,
     synthesizeVoiceTextForProvider,
     getConfiguredCloneProvider

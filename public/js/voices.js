@@ -120,12 +120,24 @@ function renderVoices() {
         const errorBlock = voice.error ? `<p class="voice-error">${escapeHtml(voice.error)}</p>` : '';
         const verificationNote = voice.requiresVerification ? '<p class="voice-note">Provider verification required before production use.</p>' : '';
 
+        // Handle voice avatar image with green cube fallback
+        const imageUrl = voice.imagePath ? `/uploads/voice-images/${escapeHtml(voice.imageFileName)}` : null;
+        const avatarHtml = imageUrl 
+            ? `<img src="${imageUrl}" alt="${escapeHtml(voice.name)} avatar" class="voice-avatar-image" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+               <div class="voice-avatar-placeholder" style="display: none;"></div>`
+            : `<div class="voice-avatar-placeholder"></div>`;
+
         return `
             <article class="voice-card ${tone}">
                 <div class="voice-card-header">
-                    <div>
-                        <h4>${escapeHtml(voice.name)}</h4>
-                        <p class="voice-tag">!${escapeHtml(voice.tag)}</p>
+                    <div class="voice-card-info">
+                        <div class="voice-avatar">
+                            ${avatarHtml}
+                        </div>
+                        <div class="voice-details">
+                            <h4>${escapeHtml(voice.name)}</h4>
+                            <p class="voice-tag">!${escapeHtml(voice.tag)}</p>
+                        </div>
                     </div>
                     <span class="voice-status-chip ${tone}">${escapeHtml(statusLabel)}</span>
                 </div>
@@ -234,7 +246,14 @@ async function handleVoiceSubmit(event) {
         setFormFeedback(`Queued !${data.voice.tag} for processing.`, 'success');
         voiceUploadForm.reset();
         toggleVoiceForm(false);
+        
+        // Force immediate refresh of voice library
         await refreshVoices();
+        
+        // Add the new voice to the local array immediately for instant UI update
+        voices.unshift(data.voice);
+        renderVoices();
+        
     } catch (error) {
         setFormFeedback(error.message, 'error');
     } finally {
@@ -320,10 +339,19 @@ async function handleVoiceLibraryClick(event) {
         try {
             setFormFeedback(`Deleting !${voice.tag}...`, 'info');
             await deleteVoice(voice.id);
+            
+            // Immediate UI update - remove from local array for instant feedback
+            voices = voices.filter(v => v.id !== voice.id);
+            renderVoices();
+            
             setFormFeedback('Voice deleted.', 'success');
+            
+            // Server refresh to ensure consistency
             await refreshVoices();
         } catch (error) {
             setFormFeedback(error.message, 'error');
+            // Refresh on error to restore consistent state
+            await refreshVoices();
         }
     }
 }
@@ -357,6 +385,20 @@ function setupEventListeners() {
     });
     voiceUploadForm?.addEventListener('submit', handleVoiceSubmit);
     voiceLibraryGrid?.addEventListener('click', handleVoiceLibraryClick);
+    
+    // Donate button scroll functionality
+    const donateBtn = document.getElementById('donateBtn');
+    if (donateBtn) {
+        donateBtn.addEventListener('click', function() {
+            const donationSection = document.getElementById('donationSection');
+            if (donationSection) {
+                donationSection.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start'
+                });
+            }
+        });
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

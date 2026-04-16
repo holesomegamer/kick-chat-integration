@@ -1,0 +1,6 @@
+{
+  "permissionMode": "all",
+  "enableBanList": true,
+  "enablePermissionFilter": false,
+  "banList": []
+}

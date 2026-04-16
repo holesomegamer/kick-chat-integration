@@ -16,7 +16,7 @@
                 <% if (isAuthenticated) { %>
                     <span class="status-badge authenticated">✅ Authenticated</span>
                     <button id="logoutBtn" class="btn btn-secondary">Logout</button>
-                    <button id="debugToggleBtn" class="btn btn-secondary">🔧 Show Debug Tools</button>
+                    <button id="donateBtn" class="btn btn-accent">💝 Donate</button>
                 <% } else { %>
                     <span class="status-badge not-authenticated">❌ Not Authenticated</span>
                     <button id="loginBtn" class="btn btn-primary">OAuth Login with Kick.com</button>
@@ -115,6 +115,7 @@
                             <option value="autoplay" selected>Autoplay</option>
                             <option value="manual">Manual</option>
                             <option value="hybrid">Hybrid</option>
+                            <option value="all_default">All Messages Default</option>
                         </select>
                     </label>
                     <label>
@@ -131,6 +132,11 @@
                         Hybrid Speed:
                         <input type="range" id="ttsSpeedHybrid" min="0.5" max="2" step="0.1" value="1.0">
                         <span id="speedValueHybrid">1.0x</span>
+                    </label>
+                    <label>
+                        All Messages Default Speed:
+                        <input type="range" id="ttsSpeedAllDefault" min="0.5" max="2" step="0.1" value="1.0">
+                        <span id="speedValueAllDefault">1.0x</span>
                     </label>
                 </div>
                 <div class="tts-mode-grid">
@@ -246,6 +252,28 @@
             <span id="ttsProcessingText">Waiting for TTS generation...</span>
         </div>
     </aside>
+
+    <footer id="donationSection" class="donation-section">
+        <div class="donation-container">
+            <h3>💝 Support This Project</h3>
+            <p>If this tool is useful to you, consider supporting development with a crypto donation:</p>
+            <div class="crypto-addresses">
+                <div class="crypto-address">
+                    <strong>Ethereum (ETH):</strong>
+                    <code class="address-text">0xcF879509D32018774c07abbc41CE724C5Fe6EAbd</code>
+                </div>
+                <div class="crypto-address">
+                    <strong>Bitcoin (BTC):</strong>
+                    <code class="address-text">bc1q8rk058twhgk5g35yss9zegx4v0dmrxztplteq3</code>
+                </div>
+                <div class="crypto-address">
+                    <strong>Solana (SOL):</strong>
+                    <code class="address-text">3JAxasFenjpwUFueL6SX2X9xBoQG7DukqWkoRkTvaJ4Y</code>
+                </div>
+            </div>
+            <p class="donation-thanks">Thank you for your support! 🙏</p>
+        </div>
+    </footer>
 
     <div id="bgCubesLayer" aria-hidden="true"></div>
     <script src="/js/bg-cubes.js"></script>

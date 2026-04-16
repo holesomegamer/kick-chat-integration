@@ -56,7 +56,8 @@ let channelPointsRewardTitle = 'Test-tts';
 let modeSpeedMultipliers = {
     autoplay: 1,
     manual: 1,
-    hybrid: 1
+    hybrid: 1,
+    all_default: 1
 };
 let lastTriggerModeChangeTime = 0; // Track when user last changed trigger mode
 
@@ -68,7 +69,7 @@ let moderationSettings = {
     enablePermissionFilter: false
 };
 
-const TTS_COMMANDS = new Set(['tts', 'custom1', 'custom2']);
+const TTS_COMMANDS = new Set(['tts']); // Only include default 'tts' command, custom voices are loaded dynamically
 const TTS_VOICE_PROFILES = {
     default: { pitch: 1.0, rateMultiplier: 1.0 },
     custom1: { pitch: 0.7, rateMultiplier: 0.95 },
@@ -78,7 +79,8 @@ const HYBRID_AUTO_BADGES = new Set(['broadcaster', 'moderator', 'vip', 'staff'])
 const TTS_MODE_DESCRIPTIONS = {
     autoplay: 'Autoplay mode reads all eligible new messages automatically.',
     manual: 'Manual mode queues eligible messages and only plays when you trigger playback.',
-    hybrid: 'Hybrid mode autoplays broadcaster/mod/vip messages and queues the rest for manual playback.'
+    hybrid: 'Hybrid mode autoplays broadcaster/mod/vip messages and queues the rest for manual playback.',
+    all_default: 'All Messages Default mode reads every chat message using the default voice.'
 };
 const TTS_TRIGGER_MODE_DESCRIPTIONS = {
     chat_commands: 'Chat commands are currently the only accepted trigger.',
@@ -403,6 +405,19 @@ function getTTSDirective(msg) {
         };
     }
 
+    // Handle all_default mode - read every message with default voice
+    if (ttsMode === 'all_default') {
+        const rawText = typeof msg?.message === 'string' ? msg.message.trim() : '';
+        if (rawText.length > 0) {
+            debugLog(`🔊 All Messages Default mode - reading: "${rawText}"`);
+            return {
+                eligible: true,
+                text: rawText,
+                voice: 'default'
+            };
+        }
+    }
+
     // If we're in channel_points mode and this isn't a pre-processed message,
     // then it's a regular chat message and should be ignored
     if (ttsTriggerMode === 'channel_points') {
@@ -471,6 +486,10 @@ function shouldAutoplayMessage(msg) {
         return false;
     }
 
+    if (ttsMode === 'all_default') {
+        return true;
+    }
+
     return isHybridPriorityMessage(msg);
 }
 
@@ -481,6 +500,10 @@ function getPlaybackSpeedMultiplier(playbackContext = 'auto') {
 
     if (playbackContext === 'hybrid') {
         return modeSpeedMultipliers.hybrid;
+    }
+
+    if (playbackContext === 'all_default') {
+        return modeSpeedMultipliers.all_default;
     }
 
     return modeSpeedMultipliers[ttsMode] || 1;
@@ -759,23 +782,15 @@ function updatePlaybackControlState() {
     }
 }
 
-// Toggle debug mode
-function toggleDebugMode() {
-    debugMode = !debugMode;
-    
-    const debugButtons = document.querySelector('.debug-buttons');
-    const debugToggleBtn = document.getElementById('debugToggleBtn');
-    
-    if (debugButtons) {
-        debugButtons.style.display = debugMode ? 'block' : 'none';
+// Scroll to donation section
+function scrollToDonation() {
+    const donationSection = document.getElementById('donationSection');
+    if (donationSection) {
+        donationSection.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+        });
     }
-    
-    if (debugToggleBtn) {
-        debugToggleBtn.textContent = debugMode ? '🐛 Hide Debug Tools' : '🔧 Show Debug Tools';
-        debugToggleBtn.className = debugMode ? 'btn btn-warning' : 'btn btn-secondary';
-    }
-    
-    console.log(`🐛 Debug mode ${debugMode ? 'ENABLED' : 'DISABLED'}`);
 }
 
 // Check authentication status
@@ -789,7 +804,8 @@ function checkAuthenticationStatus() {
 }
 
 function isProviderCustomVoice(voice) {
-    return voice !== 'default' && voice !== 'custom1' && voice !== 'custom2';
+    // Any voice that isn't 'default' is considered a custom voice
+    return voice && voice !== 'default';
 }
 
 async function playProviderVoiceAudio(text, voice) {
@@ -891,6 +907,16 @@ function applyCurrentProviderAudioVolume() {
     activeProviderAudio.volume = mutedNow ? 0 : normalizedVolume;
 }
 
+// Function to parse and clean emotes from chat text
+function parseEmotes(text) {
+    if (!text || typeof text !== 'string') {
+        return text;
+    }
+    
+    // Replace emote format [emote:ID:name] with just the emote name
+    return text.replace(/\[emote:\d+:([^\]]+)\]/g, '$1');
+}
+
 // TTS Functions
 function speakText(text, username, voice = 'default', forceReplay = false, onComplete = null, playbackContext = 'auto') {
     const ttsEnabled = getToggleButtonState('ttsEnabled', true);
@@ -916,7 +942,11 @@ function speakText(text, username, voice = 'default', forceReplay = false, onCom
         return;
     }
     
-    const cleanText = text.replace(/[^\w\s.,!?-]/g, '').trim();
+    // First parse emotes to extract just the emote names
+    const emoteParsedText = parseEmotes(text);
+    
+    // Then clean the text for TTS
+    const cleanText = emoteParsedText.replace(/[^\w\s.,!?-]/g, '').trim();
     if (cleanText.length < 2) {
         debugLog('🔊 TTS: Skipping short message:', cleanText);
         if (onComplete) onComplete(false);
@@ -1129,6 +1159,15 @@ function setupTTSControls() {
         });
     }
 
+    const ttsSpeedAllDefault = document.getElementById('ttsSpeedAllDefault');
+    const speedValueAllDefault = document.getElementById('speedValueAllDefault');
+    if (ttsSpeedAllDefault && speedValueAllDefault) {
+        ttsSpeedAllDefault.addEventListener('input', function() {
+            modeSpeedMultipliers.all_default = parseFloat(this.value);
+            speedValueAllDefault.textContent = `${this.value}x`;
+        });
+    }
+
     if (playNextManualBtn) {
         playNextManualBtn.addEventListener('click', function() {
             playNextManualMessage();
@@ -1316,10 +1355,10 @@ function displayChatMessages(messages) {
         const indicatorTitle = !autoTtsEligible
             ? (msg.isBanned ? 'Banned user - auto TTS disabled (click for manual playback)' : 
                !msg.hasPermission ? 'User lacks permissions - auto TTS disabled (click for manual playback)' :
-               'Ignored for auto TTS (trigger mode does not allow this message)')
+               'Not eligible for auto TTS (click for manual playback with default voice)')
             : (msg.played
                 ? 'Already played (click to replay)'
-                : (msg.manualQueued ? 'Queued for manual playback' : 'Not yet played'));
+                : (msg.manualQueued ? 'Queued for manual playback' : 'Not yet played (click to replay)'));
         
         messageDiv.innerHTML = `
             <span class="chat-user" ${userStyle}>${escapeHtml(safeUser)}</span>
@@ -1332,12 +1371,27 @@ function displayChatMessages(messages) {
         
         // Add click handler for manual replay
         messageDiv.addEventListener('click', () => {
-            if (!ttsDirective.eligible) {
-                debugLog(`🔊 Manual replay skipped (no !tts command): ${safeUser}: ${safeMessage}`);
+            // For manual replay, we should always allow it regardless of auto-TTS eligibility
+            let replayText, replayVoice;
+            
+            if (ttsDirective.eligible) {
+                // Message has TTS directive (command or channel points)
+                replayText = ttsDirective.text;
+                replayVoice = ttsDirective.voice;
+                debugLog(`🔊 Manual replay requested (TTS directive): ${safeUser}: ${replayText}`);
+            } else {
+                // No TTS directive - use raw message with default voice (for All Messages Default mode or manual override)
+                replayText = safeMessage;
+                replayVoice = 'default';
+                debugLog(`🔊 Manual replay requested (default voice): ${safeUser}: ${replayText}`);
+            }
+
+            // Don't replay if no text content
+            if (!replayText || replayText.trim().length === 0) {
+                debugLog(`🔊 Manual replay skipped (no text content): ${safeUser}`);
                 return;
             }
 
-            debugLog(`🔊 Manual replay requested for: ${safeUser}: ${safeMessage}`);
             replayCount++;
             removeMessageFromManualQueue(msg.id);
             msg.manualQueued = false;
@@ -1349,7 +1403,7 @@ function displayChatMessages(messages) {
                 indicator.title = 'Playing...';
             }
             
-            speakText(ttsDirective.text, safeUser, ttsDirective.voice, true, (success) => {
+            speakText(replayText, safeUser, replayVoice, true, (success) => {
                 if (indicator) {
                     if (success) {
                         indicator.textContent = '🔇';
@@ -1366,7 +1420,7 @@ function displayChatMessages(messages) {
         });
         
         messageDiv.style.cursor = 'pointer';
-        messageDiv.title = 'Click to replay message';
+        messageDiv.title = 'Click to replay message with TTS';
         
         chatContainer.appendChild(messageDiv);
         debugLog(`📋 Message ${index + 1} added to container`);
@@ -1659,10 +1713,10 @@ function setupEventListeners() {
         });
     }
     
-    // Debug toggle button
-    const debugToggleBtn = document.getElementById('debugToggleBtn');
-    if (debugToggleBtn) {
-        debugToggleBtn.addEventListener('click', toggleDebugMode);
+    // Donate button
+    const donateBtn = document.getElementById('donateBtn');
+    if (donateBtn) {
+        donateBtn.addEventListener('click', scrollToDonation);
     }
     
     // Moderation event listeners
@@ -1740,6 +1794,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const ttsSpeedAutoplay = document.getElementById('ttsSpeedAutoplay');
     const ttsSpeedManual = document.getElementById('ttsSpeedManual');
     const ttsSpeedHybrid = document.getElementById('ttsSpeedHybrid');
+    const ttsSpeedAllDefault = document.getElementById('ttsSpeedAllDefault');
 
     if (ttsModeSelect) {
         ttsMode = ttsModeSelect.value;
@@ -1752,6 +1807,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (ttsSpeedHybrid) {
         modeSpeedMultipliers.hybrid = parseFloat(ttsSpeedHybrid.value || '1');
+    }
+    if (ttsSpeedAllDefault) {
+        modeSpeedMultipliers.all_default = parseFloat(ttsSpeedAllDefault.value || '1');
     }
     syncToggleButtons();
     

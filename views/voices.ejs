@@ -15,6 +15,7 @@
             </div>
             <div class="auth-status">
                 <a href="/" class="btn btn-secondary">Back to Chat</a>
+                <button id="donateBtn" class="btn btn-accent">💝 Donate</button>
                 <% if (isAuthenticated) { %>
                     <span class="status-badge authenticated">✅ Authenticated</span>
                 <% } else { %>
@@ -72,6 +73,12 @@
                         <p class="field-help">Best baseline: clean WAV, mono, 44.1 kHz or 48 kHz spoken audio with minimal music or background noise.</p>
                     </div>
 
+                    <div class="control-group">
+                        <label for="voiceImage">Voice Avatar (Optional)</label>
+                        <input type="file" id="voiceImage" name="voiceImage" accept=".jpg,.jpeg,.png,.gif,.webp,image/*">
+                        <p class="field-help">Optional image to represent this voice. If not provided, a default green cube icon will be used.</p>
+                    </div>
+
                     <div class="button-group compact-actions">
                         <button type="submit" class="btn btn-success">Queue Voice Processing</button>
                         <button type="button" id="cancelVoiceFormBtn" class="btn btn-secondary">Cancel</button>
@@ -96,6 +103,28 @@
             </section>
         </main>
     </div>
+
+    <footer id="donationSection" class="donation-section">
+        <div class="donation-container">
+            <h3>💝 Support This Project</h3>
+            <p>If this tool is useful to you, consider supporting development with a crypto donation:</p>
+            <div class="crypto-addresses">
+                <div class="crypto-address">
+                    <strong>Ethereum (ETH):</strong>
+                    <code class="address-text">0xcF879509D32018774c07abbc41CE724C5Fe6EAbd</code>
+                </div>
+                <div class="crypto-address">
+                    <strong>Bitcoin (BTC):</strong>
+                    <code class="address-text">bc1q8rk058twhgk5g35yss9zegx4v0dmrxztplteq3</code>
+                </div>
+                <div class="crypto-address">
+                    <strong>Solana (SOL):</strong>
+                    <code class="address-text">3JAxasFenjpwUFueL6SX2X9xBoQG7DukqWkoRkTvaJ4Y</code>
+                </div>
+            </div>
+            <p class="donation-thanks">Thank you for your support! 🙏</p>
+        </div>
+    </footer>
 
     <div id="bgCubesLayer" aria-hidden="true"></div>
     <script>

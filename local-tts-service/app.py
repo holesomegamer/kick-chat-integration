@@ -198,6 +198,104 @@ async def clone_voice(
     return JSONResponse({"voice_id": voice_id})
 
 
+@app.get("/voices")
+def get_voices():
+    """List all available voices"""
+    voices = _load_voices()
+    return JSONResponse({"voices": voices})
+
+
+@app.delete("/voices/{voice_id}")
+def delete_voice_by_id(voice_id: str):
+    """Delete a voice by its ID"""
+    voices = _load_voices()
+    
+    # Find the voice to delete
+    voice_to_delete = None
+    remaining_voices = []
+    
+    for voice in voices:
+        if voice.get("id") == voice_id:
+            voice_to_delete = voice
+        else:
+            remaining_voices.append(voice)
+    
+    if voice_to_delete:
+        # Delete the sample file if it exists
+        sample_file = voice_to_delete.get("sample_file")
+        if sample_file:
+            sample_path = SAMPLES_DIR / sample_file
+            try:
+                if sample_path.exists():
+                    sample_path.unlink()
+            except Exception as e:
+                print(f"Warning: Failed to delete sample file {sample_file}: {e}")
+        
+        # Save the updated voices list
+        _save_voices(remaining_voices)
+        
+        return JSONResponse({
+            "success": True,
+            "message": f"Voice {voice_id} deleted successfully",
+            "deleted_voice": voice_to_delete
+        })
+    else:
+        # Return success even if voice doesn't exist to prevent tag conflicts
+        return JSONResponse({
+            "success": True,
+            "message": f"Voice {voice_id} not found (may have already been deleted)",
+            "deleted_voice": None
+        })
+
+
+@app.delete("/voices/tag/{tag}")
+def delete_voice_by_tag(tag: str):
+    """Delete a voice by its tag"""
+    normalized_tag = _normalize_tag(tag)
+    if not normalized_tag:
+        raise HTTPException(status_code=400, detail="Invalid tag")
+    
+    voices = _load_voices()
+    
+    # Find voices to delete (in case there are duplicates)
+    voices_to_delete = []
+    remaining_voices = []
+    
+    for voice in voices:
+        if voice.get("tag") == normalized_tag:
+            voices_to_delete.append(voice)
+        else:
+            remaining_voices.append(voice)
+    
+    if voices_to_delete:
+        # Delete sample files for all matching voices
+        for voice in voices_to_delete:
+            sample_file = voice.get("sample_file")
+            if sample_file:
+                sample_path = SAMPLES_DIR / sample_file
+                try:
+                    if sample_path.exists():
+                        sample_path.unlink()
+                except Exception as e:
+                    print(f"Warning: Failed to delete sample file {sample_file}: {e}")
+        
+        # Save the updated voices list
+        _save_voices(remaining_voices)
+        
+        return JSONResponse({
+            "success": True,
+            "message": f"Deleted {len(voices_to_delete)} voice(s) with tag '{normalized_tag}'",
+            "deleted_voices": voices_to_delete
+        })
+    else:
+        # Return success even if voice doesn't exist to prevent tag conflicts
+        return JSONResponse({
+            "success": True,
+            "message": f"No voices found with tag '{normalized_tag}' (may have already been deleted)",
+            "deleted_voices": []
+        })
+
+
 @app.post("/synthesize")
 async def synthesize(request: SynthesizeRequest):
     text = (request.text or "").strip()

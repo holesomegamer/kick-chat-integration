@@ -39,10 +39,11 @@ Use this section for manual setup. For the easiest handoff flow, use the scripts
 
 Use these scripts for the fastest onboarding:
 
-1. **Core setup (Node + .env bootstrap)**
+1. **Core setup (installs Node dependencies + creates `.env` file from template)**
    ```bash
    npm run setup:core
    ```
+   *This creates your `.env` file automatically, but you'll still need to add your Kick.com OAuth credentials*
 
 2. **Optional: local CPU voice cloning setup (Python 3.11 + venv + deps)**
    ```bash
@@ -83,16 +84,23 @@ If either command fails, install Python 3.11 from python.org and rerun the check
 
 ## ⚙️ Configuration
 
-### 1. Kick.com OAuth Setup
+### 1. Create Environment File
+
+**First, create your `.env` file** (required for the app to work):
+
+1. Copy the example file: `cp .env.example .env` (or manually copy and rename)
+2. The `.env` file will contain your private configuration
+
+### 2. Kick.com OAuth Setup
 
 1. Go to [Kick.com Developer Console](https://kick.com/developer/applications)
 2. Create a new application
 3. Set the redirect URI to: `http://localhost:3000/auth/callback`
-4. Copy the Client ID and Client Secret to your `.env` file
+4. Copy the Client ID and Client Secret (you'll need these in the next step)
 
-### 2. Environment Variables
+### 3. Environment Variables
 
-Update your `.env` file with the following:
+**Edit your newly created `.env` file** with your OAuth credentials:
 
 ```env
 KICK_CLIENT_ID=your_kick_client_id_here
@@ -102,12 +110,14 @@ SESSION_SECRET=your_random_session_secret_here
 PORT=3000
 ```
 
-Minimal required fields for login and chat monitoring are:
+**Required fields** (app won't work without these):
+- `KICK_CLIENT_ID` - From your Kick.com developer console
+- `KICK_CLIENT_SECRET` - From your Kick.com developer console  
+- `REDIRECT_URI` - Must match your Kick.com app settings exactly
+- `SESSION_SECRET` - Any random string for session security
 
-- `KICK_CLIENT_ID`
-- `KICK_CLIENT_SECRET`
-- `REDIRECT_URI`
-- `SESSION_SECRET`
+**Optional fields:**
+- `PORT` - Server port (defaults to 3000 if not set)
 
 ### 3. Local Voice Provider Mode (No Cloud Calls)
 
@@ -252,26 +262,31 @@ kick-chat-integration/
 
 ### Common Issues
 
-1. **OAuth Authentication Fails**
+1. **App Won't Start / "Cannot find module" Errors**
+   - Make sure you created the `.env` file (copy from `.env.example`)
+   - Ensure all required environment variables are set in `.env`
+   - Run `npm install` to install dependencies
+
+2. **OAuth Authentication Fails**
    - Check your Client ID and Client Secret
    - Verify the redirect URI matches your Kick.com app settings
    - Verify your local app URL and `REDIRECT_URI` are aligned
 
-2. **OAuth Callback Problems**
+3. **OAuth Callback Problems**
    - Confirm `REDIRECT_URI` exactly matches your Kick app redirect URI
    - Restart the app after updating `.env`
 
-3. **Chat Messages Not Displaying**
+4. **Chat Messages Not Displaying**
    - Ensure WebSocket connection is established
    - Check browser console for JavaScript errors
    - Verify chat monitoring is started
 
-4. **TTS Not Triggering**
+5. **TTS Not Triggering**
    - Confirm TTS is enabled in the app settings
    - Confirm your voice tag exists and is marked ready in the Voice Library
    - Confirm your message format matches your configured trigger mode
 
-5. **First Local Voice Generation Is Slow**
+6. **First Local Voice Generation Is Slow**
    - First local synthesis may download model files and warm up CPU inference
    - This can take significantly longer than later requests
    - Use `npm run diagnose` and check `http://127.0.0.1:8000/health`

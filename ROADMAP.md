@@ -3,101 +3,84 @@
 ## Overview
 This document tracks future features and enhancements planned for the Kick2TTS web application.
 
-## Planned Features
+## ✅ Implemented Features
+The following core features are **already implemented and functional**:
+- **TTS Playback Modes**: Autoplay, Manual, and Hybrid modes with full queue management
+- **Voice Cloning**: Upload samples, create custom voices, local TTS processing  
+- **Custom Voice Commands**: `!spencer`, `!aoc`, `!charlie`, `!nick`, `!tts` commands
+- **Playback Controls**: Skip, replay, clear queue, volume, speed controls
+- **Moderation Tools**: User ban lists, permission-based filtering (subs/mods/VIPs only)
+- **Manual Replay**: Individual message replay with voice selection
+- **Channel Points Integration**: TTS triggering via channel point redemptions
 
-### 1. TTS Playback Control Modes
-- **Autoplay Mode**: 
-  - Automatically read incoming chat messages as they arrive
-  - Configurable queue system for managing message backlog
-  - Smart filtering to avoid audio overlap/conflicts
-  - Pause/resume functionality during autoplay
-- **Manual Play Mode**:
-  - Queue incoming messages for manual review and selection
-  - Click-to-play individual messages from chat history
-  - Batch selection for playing multiple messages in sequence
-  - Preview mode to see message content before playing
-- **Hybrid Mode**:
-  - Combine both modes with user-defined triggers
-  - Auto-play for specific users (VIPs/mods) and manual for others
-  - Time-based switching (auto during low activity, manual during high activity)
-- **Playback Controls**:
-  - Skip current message
-  - Clear queue functionality
-  - Replay last message
-  - Adjust playback speed per mode
+## 🚀 Future Enhancements
 
-### 2. Premium Voice Features
-- **Custom Voices with !tags**: Add paid feature for custom voice selection using chat commands
-- **AI Voice Cloning**: 
-  - Allow users to upload voice samples
-  - Process samples using AI to create unique voices
-  - Save generated voices locally in project folder structure
-  - Manage voice library per user account
+### 1. Chat Visual Enhancements
+- **Emote Support**: 
+  - Parse Kick.com emote data from chat messages
+  - Display emote images instead of text placeholders  
+  - Support for animated GIF/WebP emotes
+  - Emote caching for performance
+  - Text fallback for accessibility
 
-### 2. Chat Replay Enhancements  
-- **Manual Replay Voice Control**: Add ability to change voice for individual chat messages during manual replay
-- **Voice Selection UI**: Dropdown or interface for voice switching
+### 2. Advanced Voice Features
+- **AI Voice Cloning Providers**: 
+  - Integration with ElevenLabs API for premium voice generation
+  - Azure Cognitive Services voice options
+  - Voice quality comparison between providers
 
-### 3. TTS Command System
-- **Command-Based TTS**: Only process messages that start with TTS commands
-  - `!tts hello world` → reads "hello world" in default voice
-  - `!customvoice1 hello world` → reads "hello world" in custom voice
-  - `hello world` → skipped (no TTS processing)
-- **Command Parsing**: Parse message content to extract voice command and text
-- **Fallback Handling**: Default voice when specified custom voice unavailable
-
-### 4. Moderation & Control Features
-- **User Ban List**: 
-  - Maintain blacklist of users whose messages should be ignored
-  - Admin interface for ban management
-- **Permission-Based Modes**:
-  - Subscriber-only mode (only read subscriber messages)
-  - Moderator-only mode (only read moderator messages)
-  - VIP/follower filtering options
-
-### 5. Channel Integration
-- **Channel Points Integration**: 
-  - React to channel point redemptions
-  - Custom TTS triggers via channel points
-  - Point cost configuration for premium voices
-
-### 6. Performance & Settings
+### 3. Performance & Optimization
 - **Configurable Polling Rate**: 
-  - User-adjustable message fetch frequency
+  - User-adjustable chat message fetch frequency
   - Rate limiting protection to avoid API abuse
   - Optimal polling suggestions based on channel activity
+  - Performance metrics dashboard
 
-### 7. Monetization & Business Model
-- **Payment Structure Planning**:
-  - Determine pricing tiers for premium features
-  - Subscription vs one-time payment models
-  - Feature gating strategy
-  - Payment processor integration (Stripe, PayPal)
+### 4. Channel Integration Enhancements
+- **Advanced Channel Points**: 
+  - Multiple reward types for different voice options
+  - Point cost configuration per custom voice
+  - Reward cooldowns and user limits
+  - Channel points statistics tracking
 
-### 8. Production Readiness
-- **UI/UX Polish**:
-  - Professional branding and design
-  - Responsive layout improvements
-  - User onboarding flow
-  - Help documentation
-- **Publishing Preparation**:
-  - Production deployment strategy
-  - Domain and hosting setup
-  - SSL certificate configuration
+### 5. UI/UX Improvements
+- **Professional Design Polish**:
+  - Modern responsive layout with improved branding
+  - Dark/light theme options
+  - User onboarding flow with guided setup
+  - Comprehensive help documentation
+  - Accessibility improvements (screen reader support, keyboard navigation)
+  
+### 6. Support & Community
+- **Donation Support**:
+  - Simple donation button integration (Ko-fi, PayPal, etc.)
+  - Optional supporter recognition in UI
+  - Transparent hosting cost information
+
+### 7. Production Deployment
+- **Infrastructure**:
+  - Production hosting setup with load balancing
+  - Domain configuration and SSL certificates  
+  - Database migration for user accounts and voice storage
+  - CDN setup for voice file delivery
+- **Legal & Compliance**:
   - Terms of service and privacy policy
+  - GDPR compliance for EU users
+  - Content moderation policies
 
-## Technical Considerations
+## Technical Debt & Maintenance
 
-### TTS Playback Architecture
-- Message queue management system for both auto and manual modes
-- Real-time audio status tracking to prevent overlapping playback
-- User preference storage for default playback modes
-- WebSocket integration for instant mode switching
-- Audio interruption and resumption handling
+### Code Quality
+- **Testing Suite**: Unit tests for TTS processing, integration tests for API endpoints
+- **Documentation**: API documentation, deployment guides, troubleshooting docs
+- **Monitoring**: Error tracking, performance monitoring, uptime alerts
+- **Security**: Input validation, rate limiting, OAuth token refresh handling
 
-### Voice Processing
-- Research AI voice generation APIs (ElevenLabs, Azure Cognitive Services, etc.)
-- Local voice file storage and management system
+### Scalability Preparation  
+- **Database Integration**: Move from in-memory storage to persistent database
+- **Voice File Management**: Cloud storage for voice samples and generated audio
+- **API Rate Limiting**: Implement proper rate limiting for Kick.com API calls
+- **Caching Layer**: Redis cache for frequently accessed voice files and chat data
 - Audio file format standardization
 - Voice sample quality requirements
 
