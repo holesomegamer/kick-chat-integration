@@ -256,14 +256,6 @@ kick-chat-integration/
 - `chatStarted` - Monitoring started notification
 - `chatStopped` - Monitoring stopped notification
 
-## 🛡️ Security Considerations
-
-- Session data is stored in memory (use Redis in production)
-- HTTPS should be used in production
-- Validate and sanitize all incoming request input
-- Implement rate limiting for API endpoints
-- Set up proper CORS policies for production
-
 ## 🐛 Troubleshooting
 
 ### Common Issues
