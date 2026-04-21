@@ -1,0 +1,65 @@
+Step 1. ###DOWNLOAD PREREQS###
+
+
+#node.js (needed to host webserver local)
+	https://nodejs.org/en/download 
+1. download and run msi
+2. agree to terms
+3. use the default directory: C:\Program Files\nodejs\
+4. custom setup: do not uncheck any options
+5. tools for native modules - do not check automatically install necessary tools. not needed, hit next
+6. hit install, then finish
+
+#python 3.11 (needed for chatterbox tts)
+	https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
+1. copy paste this link, it will start a download.
+2. run the python-3.11.9-amd64.exe
+3. checkbox both use admin, and add python.exe to PATH
+4. hit install now
+
+
+Step 2. ###CONFIGURE KICK###
+
+#setup kick app (this sets up the channel point redemption)
+1. go to your kick developer settings: 
+	https://kick.com/settings/developer
+2. click create new
+3. Give the app a name and description, add the redirect URL: http://localhost:3000/auth/callback
+4. checkbox the Scopes Requested:
+✅ Read user information (including email address) - default
+✅ Read Channel points rewards information on a channel
+✅ Read, add, edit and delete Channel points rewards on a channel
+✅ Write to Chat feed
+✅ Subscribe to events (read chat feed, follows, subscribes, gifts)
+5. hit create app
+6. save the client ID and secrete strings
+
+
+Step 3. ###SETUP APP###
+
+
+1. download the zip from GitHub, unzip the folder to any directory. (need about 5GB for the model)
+	https://github.com/holesomegamer/kick-chat-integration
+2. right click the '.env.example' file and rename: to '.env'
+3. open the file with notepad and update it with the client ID and client secret from the kick dev app created above. Save the file, and close.
+4. open command prompt from the directory (right click empty space in the directory and click and hit 'open in terminal') this will start command prompt with the correct location
+5. run this command to install dependencies: 	npm install
+6. run this command to setup the webserver core: 	npm run setup:core
+7. run this command to setup tts: 	npm run setup:local-tts
+Note: this will take a bit to configure
+8. run this command to start the app: 	npm run start:all
+Note: this starts 2 terminal windows, you can minimize both, one is the server hosting the browser, the other is the tts log
+	if you close these you will be stopping the app.
+
+
+Step 4. ###USE APP###
+1. in your browser go to: 
+	http://localhost:3000/
+2. click OAUTH LOGIN WITH KICK.COM
+3. enter any channel name to monitor chat
+4. Add voices with manage voices button
+5. by default it runs in autoplay mode, chat commands only, you can change these with playback mode and trigger mode
+6. test one of your voices by sending a chat with a !tag in front to channel.
+7. channel point test: setup a channel point redemption with name Test-tts
+8. change trigger mode to: chat + channel points
+9. send a test redemptions with the !tag infront of the message
